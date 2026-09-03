@@ -37,6 +37,7 @@
   .toolbar button{padding:7px 14px; border:none; background:var(--green); color:#fff; border-radius:4px; cursor:pointer; font-size:.82rem;}
   .toolbar button.secondary{background:var(--navy2);}
   .toolbar button.danger{background:var(--red);}
+  .searchBar{background:#f2f0e6; border:1px solid var(--line); border-radius:6px; padding:8px 10px; align-items:center;}
   .balBox{margin-left:auto; font-weight:bold; font-family:Arial,sans-serif; font-size:.9rem; background:#fff; padding:6px 14px; border-radius:5px; border:1px solid var(--line);}
   table{width:100%; border-collapse:collapse; font-size:.82rem; font-family:Arial,sans-serif;}
   th,td{border:1px solid var(--line); padding:6px 8px; text-align:left;}
@@ -108,6 +109,14 @@
       <button class="secondary" onclick="window.print()">🖨 Print</button>
       <span class="balBox" id="cb_balance">Balance: —</span>
     </div>
+    <div class="toolbar noprint searchBar">
+      🔎 <input type="text" id="cb_search" placeholder="Search particulars, V.No, amount…" style="min-width:240px;" oninput="renderCashbook()">
+      <input type="date" id="cb_search_from" title="From date" oninput="renderCashbook()">
+      <span>to</span>
+      <input type="date" id="cb_search_to" title="To date" oninput="renderCashbook()">
+      <button class="secondary" onclick="clearCashSearch()">Clear</button>
+      <span id="cb_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
+    </div>
     <div class="tableWrap">
       <table>
         <thead><tr><th>Date</th><th>Particulars</th><th>V.No</th><th>Received (₹)</th><th>Payment (₹)</th><th>Balance (₹)</th><th class="noprint">—</th></tr></thead>
@@ -127,6 +136,14 @@
       <input type="number" id="v_amount" placeholder="Amount (₹)" style="width:120px;">
       <button onclick="addVoucher()">+ Add Voucher</button>
       <button class="secondary" onclick="printVoucher()">🖨 Print Selected</button>
+    </div>
+    <div class="toolbar noprint searchBar">
+      🔎 <input type="text" id="v_search" placeholder="Search V.No, pay to, purpose, amount…" style="min-width:240px;" oninput="renderVouchers()">
+      <input type="date" id="v_search_from" title="From date" oninput="renderVouchers()">
+      <span>to</span>
+      <input type="date" id="v_search_to" title="To date" oninput="renderVouchers()">
+      <button class="secondary" onclick="clearVoucherSearch()">Clear</button>
+      <span id="v_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
     </div>
     <div class="tableWrap">
       <table>
@@ -148,6 +165,14 @@
       <button onclick="addPassbookEntry()">+ Add Entry</button>
       <button class="secondary" onclick="window.print()">🖨 Print</button>
       <span class="balBox" id="pb_balance">Balance: —</span>
+    </div>
+    <div class="toolbar noprint searchBar">
+      🔎 <input type="text" id="pb_search" placeholder="Search particulars, amount…" style="min-width:240px;" oninput="renderPassbook()">
+      <input type="date" id="pb_search_from" title="From date" oninput="renderPassbook()">
+      <span>to</span>
+      <input type="date" id="pb_search_to" title="To date" oninput="renderPassbook()">
+      <button class="secondary" onclick="clearPassSearch()">Clear</button>
+      <span id="pb_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
     </div>
     <div class="tableWrap">
       <table>
@@ -303,12 +328,28 @@ function watchCashbook(fundId){
       renderCashbook();
     }, err=>console.error(err));
 }
+function clearCashSearch(){
+  document.getElementById('cb_search').value='';
+  document.getElementById('cb_search_from').value='';
+  document.getElementById('cb_search_to').value='';
+  renderCashbook();
+}
 function renderCashbook(){
   const tbody = document.getElementById('cb_tbody');
   tbody.innerHTML = '';
-  let bal = 0;
+  const q = (document.getElementById('cb_search').value||'').trim().toLowerCase();
+  const from = document.getElementById('cb_search_from').value;
+  const to = document.getElementById('cb_search_to').value;
+  let bal = 0, shown = 0;
   cbEntries.forEach(e=>{
     bal += (Number(e.received)||0) - (Number(e.payment)||0);
+    if(from && e.date < from) return;
+    if(to && e.date > to) return;
+    if(q){
+      const hay = [e.particulars, e.vno, e.received, e.payment, e.date].join(' ').toLowerCase();
+      if(!hay.includes(q)) return;
+    }
+    shown++;
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${e.date||''}</td><td>${e.particulars||''}</td><td>${e.vno||''}</td>
       <td class="num recv">${inr(e.received)}</td><td class="num pay">${inr(e.payment)}</td>
@@ -317,6 +358,9 @@ function renderCashbook(){
     tbody.appendChild(tr);
   });
   document.getElementById('cb_balance').textContent = 'Balance: ₹' + inr(bal);
+  const info = document.getElementById('cb_matchInfo');
+  if(q || from || to) info.textContent = `Showing ${shown} of ${cbEntries.length} entries`;
+  else info.textContent = '';
 }
 function addCashEntry(){
   const date = document.getElementById('cb_date').value;
@@ -353,12 +397,28 @@ function watchPassbook(bankId){
       renderPassbook();
     }, err=>console.error(err));
 }
+function clearPassSearch(){
+  document.getElementById('pb_search').value='';
+  document.getElementById('pb_search_from').value='';
+  document.getElementById('pb_search_to').value='';
+  renderPassbook();
+}
 function renderPassbook(){
   const tbody = document.getElementById('pb_tbody');
   tbody.innerHTML = '';
-  let bal = 0;
+  const q = (document.getElementById('pb_search').value||'').trim().toLowerCase();
+  const from = document.getElementById('pb_search_from').value;
+  const to = document.getElementById('pb_search_to').value;
+  let bal = 0, shown = 0;
   pbEntries.forEach(e=>{
     bal += (Number(e.received)||0) - (Number(e.payment)||0);
+    if(from && e.date < from) return;
+    if(to && e.date > to) return;
+    if(q){
+      const hay = [e.particulars, e.received, e.payment, e.date].join(' ').toLowerCase();
+      if(!hay.includes(q)) return;
+    }
+    shown++;
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${e.date||''}</td><td>${e.particulars||''}</td>
       <td class="num recv">${inr(e.received)}</td><td class="num pay">${inr(e.payment)}</td>
@@ -367,6 +427,9 @@ function renderPassbook(){
     tbody.appendChild(tr);
   });
   document.getElementById('pb_balance').textContent = 'Balance: ₹' + inr(bal);
+  const info = document.getElementById('pb_matchInfo');
+  if(q || from || to) info.textContent = `Showing ${shown} of ${pbEntries.length} entries`;
+  else info.textContent = '';
 }
 function addPassbookEntry(){
   const date = document.getElementById('pb_date').value;
@@ -399,10 +462,27 @@ function watchVouchers(){
     renderVouchers();
   }, err=>console.error(err));
 }
+function clearVoucherSearch(){
+  document.getElementById('v_search').value='';
+  document.getElementById('v_search_from').value='';
+  document.getElementById('v_search_to').value='';
+  renderVouchers();
+}
 function renderVouchers(){
   const tbody = document.getElementById('v_tbody');
   tbody.innerHTML = '';
+  const q = (document.getElementById('v_search').value||'').trim().toLowerCase();
+  const from = document.getElementById('v_search_from').value;
+  const to = document.getElementById('v_search_to').value;
+  let shown = 0;
   vEntries.forEach(e=>{
+    if(from && e.date < from) return;
+    if(to && e.date > to) return;
+    if(q){
+      const hay = [e.vno, e.fund, e.payTo, e.purpose, e.amount, e.date].join(' ').toLowerCase();
+      if(!hay.includes(q)) return;
+    }
+    shown++;
     const tr = document.createElement('tr');
     tr.innerHTML = `<td><input type="radio" name="vsel" value="${e.id}"></td>
       <td>${e.vno||''}</td><td>${e.date||''}</td><td>${e.fund||''}</td>
@@ -410,6 +490,9 @@ function renderVouchers(){
       <td class="noprint rowActions"><button onclick="deleteVoucher('${e.id}')">🗑</button></td>`;
     tbody.appendChild(tr);
   });
+  const info = document.getElementById('v_matchInfo');
+  if(q || from || to) info.textContent = `Showing ${shown} of ${vEntries.length} vouchers`;
+  else info.textContent = '';
 }
 function addVoucher(){
   const date = document.getElementById('v_date').value;
