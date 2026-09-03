@@ -321,10 +321,16 @@ function sortByDate(arr){
 function watchCashbook(fundId){
   if(cbUnsub) cbUnsub();
   cbUnsub = db.collection('cashbook').doc(fundId).collection('entries')
-    .orderBy('date').orderBy('createdAt')
     .onSnapshot(snap=>{
       cbEntries = [];
       snap.forEach(doc=> cbEntries.push({id:doc.id, ...doc.data()}));
+      cbEntries.sort((a,b)=>{
+        const da = a.date||'', db_ = b.date||'';
+        if(da!==db_) return da.localeCompare(db_);
+        const ca = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+        const cb = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+        return ca - cb;
+      });
       renderCashbook();
     }, err=>console.error(err));
 }
@@ -390,10 +396,16 @@ function deleteCashEntry(id){
 function watchPassbook(bankId){
   if(pbUnsub) pbUnsub();
   pbUnsub = db.collection('passbook').doc(bankId).collection('entries')
-    .orderBy('date').orderBy('createdAt')
     .onSnapshot(snap=>{
       pbEntries = [];
       snap.forEach(doc=> pbEntries.push({id:doc.id, ...doc.data()}));
+      pbEntries.sort((a,b)=>{
+        const da = a.date||'', db_ = b.date||'';
+        if(da!==db_) return da.localeCompare(db_);
+        const ca = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+        const cb = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+        return ca - cb;
+      });
       renderPassbook();
     }, err=>console.error(err));
 }
