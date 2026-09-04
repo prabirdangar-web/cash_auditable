@@ -221,6 +221,36 @@
       <b>Export</b> — download everything currently in Firestore as a JSON backup.<br><br>
       <button onclick="exportAll()" style="padding:8px 16px;border:none;border-radius:4px;background:var(--navy2);color:#fff;cursor:pointer;">Export All Data (JSON)</button>
     </div>
+    <div class="setupBox">
+      <b>Import JSON</b> — load a JSON file into Firestore. Accepts either a full backup
+      (<code>{"cashbook":{...},"passbook":{...},"vouchers":[...]}</code>, i.e. what Export produces) or a
+      plain array of entries for a single fund/account (<code>[{"date":...,"particulars":...,"received":...,"payment":...}, ...]</code>).
+      <br><br>
+      <input type="file" id="importFile" accept=".json,application/json" style="font-family:Arial,sans-serif;font-size:.82rem;">
+      <br><br>
+      <label style="font-family:Arial,sans-serif;font-size:.82rem;">If the file is a plain array, load it into:
+        <select id="importTarget" style="padding:6px;border:1px solid var(--line);border-radius:4px;">
+          <option value="cashbook|development">Cash Book — Development</option>
+          <option value="cashbook|ssm">Cash Book — SSM</option>
+          <option value="cashbook|hostel">Cash Book — Hostel Fund</option>
+          <option value="cashbook|vocational">Cash Book — Vocational</option>
+          <option value="cashbook|mdm">Cash Book — MDM</option>
+          <option value="passbook|dev_bank">Pass Book — Dev A/C</option>
+          <option value="passbook|salary_bdcc">Pass Book — Salary A/C (BDCC)</option>
+          <option value="passbook|hostel_fund">Pass Book — Hostel Fund A/C</option>
+          <option value="passbook|ssa_sbi">Pass Book — SSA/SSM A/C (SBI)</option>
+          <option value="passbook|voc_bank">Pass Book — Vocational A/C (VOC)</option>
+          <option value="passbook|mdm_bank">Pass Book — Mid-Day Meal A/C (MDM)</option>
+        </select>
+      </label>
+      <br><br>
+      <label style="font-family:Arial,sans-serif;font-size:.82rem;"><input type="radio" name="importMode" value="merge" checked> Merge (add on top of existing entries)</label>
+      &nbsp;&nbsp;
+      <label style="font-family:Arial,sans-serif;font-size:.82rem;"><input type="radio" name="importMode" value="replace"> Replace (delete existing entries first)</label>
+      <br><br>
+      <button onclick="importJsonFile()" style="padding:9px 18px;background:var(--green);border:none;color:#fff;border-radius:4px;font-weight:bold;cursor:pointer;">Import JSON File</button>
+      <span id="importJsonStatus" style="margin-left:10px;font-size:.85rem;"></span>
+    </div>
   </div>
 </div>
 
@@ -758,6 +788,133 @@ async function exportAll(){
   a.href = URL.createObjectURL(blob);
   a.download = 'tfhs_cashbook_export_' + new Date().toISOString().slice(0,10) + '.json';
   a.click();
+}
+
+/* ---------- Import from a user-selected JSON file ---------- */
+function readFileAsText(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=> resolve(reader.result);
+    reader.onerror = ()=> reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+async function clearCollection(ref, statusEl, label){
+  let deleted = 0;
+  while(true){
+    const snap = await ref.limit(400).get();
+    if(snap.empty) break;
+    const batch = db.batch();
+    snap.forEach(doc=> batch.delete(doc.ref));
+    await batch.commit();
+    deleted += snap.size;
+    if(statusEl) statusEl.textContent = `Deleting "${label}" — removed ${deleted} so far…`;
+  }
+  return deleted;
+}
+
+async function writeEntriesToCollection(ref, entries, isVoucher){
+  let batch = db.batch(); let count = 0; let total = 0;
+  async function commitIfNeeded(){
+    if(count >= 400){ await batch.commit(); batch = db.batch(); count = 0; }
+  }
+  for(const row of entries){
+    const docRef = ref.doc();
+    const data = isVoucher
+      ? {
+          date: row.date || null, fund: row.fund || null, vno: row.vno || null,
+          payTo: row.payTo || null, purpose: row.purpose || null,
+          amount: (row.amount!==undefined && row.amount!==null && row.amount!=='') ? Number(row.amount) : null,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(), imported:true
+        }
+      : {
+          date: row.date || null, particulars: row.particulars || null, vno: row.vno || null,
+          received: row.received===undefined? null: row.received,
+          payment: row.payment===undefined? null: row.payment,
+          remarks: row.remarks || null,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(), imported:true
+        };
+    batch.set(docRef, data);
+    count++; total++; await commitIfNeeded();
+  }
+  if(count>0) await batch.commit();
+  return total;
+}
+
+async function importJsonFile(){
+  const fileInput = document.getElementById('importFile');
+  const statusEl = document.getElementById('importJsonStatus');
+  const mode = document.querySelector('input[name="importMode"]:checked').value;
+  const file = fileInput.files[0];
+  if(!file){ alert('Choose a .json file first.'); return; }
+
+  let parsed;
+  try{
+    const text = await readFileAsText(file);
+    parsed = JSON.parse(text);
+  }catch(err){
+    statusEl.textContent = 'Error reading/parsing JSON: ' + err.message;
+    return;
+  }
+
+  const looksLikeFullBackup = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    && (parsed.cashbook || parsed.passbook || parsed.vouchers);
+
+  try{
+    let grandTotal = 0;
+
+    if(looksLikeFullBackup){
+      if(mode==='replace' && !confirm('This will DELETE existing entries in every fund/account/voucher list present in the file, then reload from the file. Continue?')) return;
+
+      if(parsed.cashbook){
+        for(const fundId of Object.keys(parsed.cashbook)){
+          const ref = db.collection('cashbook').doc(fundId).collection('entries');
+          statusEl.textContent = `Cash Book — ${fundId}: preparing…`;
+          if(mode==='replace') await clearCollection(ref, statusEl, 'cashbook/'+fundId);
+          const n = await writeEntriesToCollection(ref, parsed.cashbook[fundId], false);
+          grandTotal += n;
+          statusEl.textContent = `Cash Book — ${fundId}: imported ${n} rows.`;
+        }
+      }
+      if(parsed.passbook){
+        for(const bankId of Object.keys(parsed.passbook)){
+          const ref = db.collection('passbook').doc(bankId).collection('entries');
+          statusEl.textContent = `Pass Book — ${bankId}: preparing…`;
+          if(mode==='replace') await clearCollection(ref, statusEl, 'passbook/'+bankId);
+          const n = await writeEntriesToCollection(ref, parsed.passbook[bankId], false);
+          grandTotal += n;
+          statusEl.textContent = `Pass Book — ${bankId}: imported ${n} rows.`;
+        }
+      }
+      if(parsed.vouchers && parsed.vouchers.length){
+        const ref = db.collection('vouchers');
+        if(mode==='replace') await clearCollection(ref, statusEl, 'vouchers');
+        const n = await writeEntriesToCollection(ref, parsed.vouchers, true);
+        grandTotal += n;
+      }
+      statusEl.textContent = `Done — imported ${grandTotal} rows from full backup file.`;
+    } else {
+      const entries = Array.isArray(parsed) ? parsed
+        : (parsed.entries && Array.isArray(parsed.entries)) ? parsed.entries
+        : null;
+      if(!entries){ statusEl.textContent = 'Unrecognised file format (expected an array of entries, or a {cashbook, passbook, vouchers} backup).'; return; }
+
+      const [kind, id] = document.getElementById('importTarget').value.split('|');
+      const label = document.getElementById('importTarget').selectedOptions[0].textContent;
+      const ref = db.collection(kind).doc(id).collection('entries');
+
+      if(mode==='replace'){
+        if(!confirm(`This will DELETE all existing entries under "${label}" and replace them with the ${entries.length} entries from the file. Continue?`)) return;
+        await clearCollection(ref, statusEl, label);
+      }
+      const n = await writeEntriesToCollection(ref, entries, false);
+      statusEl.textContent = `Done — ${mode==='replace'?'replaced':'merged'} "${label}" with ${n} entries from the file.`;
+    }
+  }catch(err){
+    console.error(err);
+    statusEl.textContent = 'Error: ' + err.message;
+  }
 }
 
 /* ---------- Seed Data including VOC and MDM Passbook Parts with OB & CB Matching ---------- */
