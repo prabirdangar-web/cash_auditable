@@ -57,6 +57,13 @@
   .badge.ok{background:#1e8f4e; color:#fff; font-weight:bold;}
   .badge.warn{background:#e08a00; color:#fff; font-weight:bold;}
   footer.note{text-align:center; font-size:.72rem; color:var(--grey); font-family:Arial,sans-serif; padding:20px 0;}
+
+  .deleteSecurityTop{background:#fff3cd;border:3px solid var(--red);border-radius:8px;padding:12px 14px;margin:10px 0;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);}
+  .deleteSecurityTop .title{font-size:1rem;font-weight:800;color:var(--red);margin-bottom:7px;}
+  .deleteSecurityTop input{padding:10px 12px;border:2px solid var(--red);border-radius:5px;font-size:.95rem;min-width:280px;font-family:Arial,sans-serif;}
+  .deleteSecurityTop button{padding:10px 16px;border:0;border-radius:5px;background:var(--red);color:#fff;font-weight:bold;cursor:pointer;margin-left:7px;}
+  .deleteSecurityTop .status{font-size:.82rem;font-weight:bold;margin-left:8px;}
+  @media(max-width:650px){.deleteSecurityTop input{min-width:100%;margin:6px 0}.deleteSecurityTop button{margin:4px 0;width:100%}.deleteSecurityTop .status{display:block;margin:7px 0 0}}
   @media print{
     header.top, nav.tabs, .toolbar, .subtabs, #app > nav, .noprint{display:none !important;}
     body{background:#fff;}
@@ -95,6 +102,18 @@
     <button class="tabBtn" data-tab="passbook" onclick="showTab('passbook')">Pass Book</button>
     <button class="tabBtn" data-tab="setup" onclick="showTab('setup')">Setup / Import</button>
   </nav>
+
+  <div class="deleteSecurityTop noprint">
+    <div class="title">🔐 DELETE PASSWORD — REQUIRED FOR ALL DELETIONS</div>
+    <div style="font-size:.82rem;margin-bottom:7px;">
+      Enter the shared Delete Password here. It is required for deleting Cash Book, Voucher Register and Pass Book entries,
+      including old/historical and newly added records.
+    </div>
+    <input type="password" id="topDeletePasswordInput" autocomplete="new-password" placeholder="Enter Delete Password">
+    <button onclick="saveTopDeletePassword()">Set / Change Password</button>
+    <button type="button" onclick="clearTopDeletePassword()" style="background:var(--navy2);">Clear</button>
+    <span id="topDeletePasswordStatus" class="status">Loading…</span>
+  </div>
 
   <!-- CASH BOOK -->
   <div class="panel active" id="panel-cashbook">
@@ -217,6 +236,16 @@
       <br><br>
       <span id="replaceStatus" style="font-size:.85rem;"></span>
     </div>
+    <div class="setupBox" style="background:#eef7ff;border:2px solid var(--navy2);">
+      <b>🔒 Delete Password Security</b><br>
+      The same shared Delete Password is required before deleting any Cash Book, Voucher Register or Pass Book entry, including historical/past and current/new records.
+      <br><br>
+      <label style="font-family:Arial,sans-serif;font-size:.82rem;font-weight:bold;">Delete Password:
+        <input type="password" id="deletePasswordInput" autocomplete="new-password" placeholder="Enter delete password" style="padding:8px;min-width:240px;border:1px solid var(--line);border-radius:4px;margin-left:6px;">
+      </label>
+      <button onclick="saveDeletePassword()" style="padding:9px 18px;background:var(--navy2);border:none;color:#fff;border-radius:4px;font-weight:bold;cursor:pointer;margin-left:8px;">Set / Change Delete Password</button>
+      <span id="deletePasswordStatus" style="margin-left:10px;font-size:.85rem;font-weight:bold;"></span>
+    </div>
     <div class="setupBox">
       <b>Export</b> — download everything currently in Firestore as a JSON backup.<br><br>
       <button onclick="exportAll()" style="padding:8px 16px;border:none;border-radius:4px;background:var(--navy2);color:#fff;cursor:pointer;">Export All Data (JSON)</button>
@@ -293,6 +322,7 @@ let currentBank = "dev_bank";
 let cbEntries = [], vEntries = [], pbEntries = [];
 let cbUnsub = null, pbUnsub = null, vUnsub = null;
 let cbEditingId = null, pbEditingId = null, vEditingId = null;
+let deletePasswordCache = null;
 
 function escapeAttr(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
@@ -318,6 +348,7 @@ auth.onAuthStateChanged(user=>{
     document.getElementById('fbStatus').textContent = 'connected as ' + user.email;
     document.getElementById('fbStatus').className = 'badge ok';
     buildFundTabs(); buildBankTabs();
+    loadDeletePassword();
     watchCashbook(currentFund);
     watchPassbook(currentBank);
     watchVouchers();
@@ -327,6 +358,97 @@ auth.onAuthStateChanged(user=>{
     document.getElementById('userBox').style.display='none';
   }
 });
+
+/* ---------- Shared Delete Password ---------- */
+async function loadDeletePassword(){
+  try{
+    const snap = await db.collection('_meta').doc('deleteSecurity').get();
+    deletePasswordCache = snap.exists ? (snap.data().deletePassword || null) : null;
+    const el = document.getElementById('deletePasswordStatus');
+    if(el) el.textContent = deletePasswordCache ? 'Delete password is set.' : 'No delete password set.';
+    setDeletePasswordStatus(deletePasswordCache ? 'Delete password is set.' : 'No Delete Password set.');
+  }catch(err){
+    console.error('Delete password load error:', err);
+    const el = document.getElementById('deletePasswordStatus');
+    if(el) el.textContent = 'Could not load password.';
+    setDeletePasswordStatus('Could not load password.');
+  }
+}
+async function saveDeletePassword(){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  const input = document.getElementById('deletePasswordInput');
+  const p1 = input ? input.value : '';
+  if(!p1){ alert('Enter a Delete Password.'); return; }
+  const p2 = prompt('Re-enter the Delete Password to confirm:');
+  if(p2 === null) return;
+  if(p1 !== p2){ alert('Passwords do not match.'); return; }
+  try{
+    await db.collection('_meta').doc('deleteSecurity').set({
+      deletePassword:p1,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:auth.currentUser.email || ''
+    },{merge:true});
+    deletePasswordCache = p1;
+    if(input) input.value = '';
+    const el = document.getElementById('deletePasswordStatus');
+    if(el) el.textContent = 'Delete password saved.';
+    alert('Shared Delete Password saved successfully.');
+  }catch(err){ alert('Could not save Delete Password: ' + err.message); }
+}
+async function saveTopDeletePassword(){
+  const src = document.getElementById('topDeletePasswordInput');
+  const setup = document.getElementById('deletePasswordInput');
+  const input = src || setup;
+  const p1 = input ? input.value : '';
+  if(!p1){ alert('Enter a Delete Password.'); if(input) input.focus(); return; }
+  const p2 = prompt('Re-enter the Delete Password to confirm:');
+  if(p2 === null) return;
+  if(p1 !== p2){ alert('Passwords do not match.'); return; }
+  try{
+    await db.collection('_meta').doc('deleteSecurity').set({
+      deletePassword:p1,
+      updatedAt:firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy:auth.currentUser ? (auth.currentUser.email || '') : ''
+    },{merge:true});
+    deletePasswordCache = p1;
+    if(src) src.value='';
+    if(setup) setup.value='';
+    setDeletePasswordStatus('Delete password saved successfully.');
+    alert('Shared Delete Password saved successfully.');
+  }catch(err){ alert('Could not save Delete Password: ' + err.message); }
+}
+function clearTopDeletePassword(){
+  const el=document.getElementById('topDeletePasswordInput');
+  if(el){el.value='';el.focus();}
+}
+function setDeletePasswordStatus(text){
+  const a=document.getElementById('topDeletePasswordStatus');
+  const b=document.getElementById('deletePasswordStatus');
+  if(a) a.textContent=text;
+  if(b) b.textContent=text;
+}
+async function verifyDeletePassword(){
+  if(!auth.currentUser){ alert('Please sign in first.'); return false; }
+  if(deletePasswordCache === null) await loadDeletePassword();
+  if(!deletePasswordCache){
+    alert('No Delete Password has been set. Use the red DELETE PASSWORD box at the top first.');
+    return false;
+  }
+  const input = document.getElementById('topDeletePasswordInput');
+  const entered = input ? input.value : '';
+  if(!entered){
+    alert('Enter the Delete Password in the red DELETE PASSWORD box at the top.');
+    if(input) input.focus();
+    return false;
+  }
+  if(entered !== deletePasswordCache){
+    alert('Incorrect Delete Password. Deletion cancelled.');
+    if(input){ input.value=''; input.focus(); }
+    return false;
+  }
+  if(input) input.value='';
+  return true;
+}
 
 /* ---------- Tabs ---------- */
 function showTab(tab){
@@ -449,9 +571,12 @@ function addCashEntry(){
     document.getElementById('cb_payment').value='';
   });
 }
-function deleteCashEntry(id){
-  if(!confirm('Delete this entry?')) return;
-  db.collection('cashbook').doc(currentFund).collection('entries').doc(id).delete();
+async function deleteCashEntry(id){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  if(!(await verifyDeletePassword())) return;
+  if(!confirm('Delete this Cash Book entry permanently?')) return;
+  try{ await db.collection('cashbook').doc(currentFund).collection('entries').doc(id).delete(); }
+  catch(err){ alert('Could not delete entry: ' + err.message); }
 }
 function startEditCash(id){ cbEditingId = id; renderCashbook(); }
 function cancelEditCash(){ cbEditingId = null; renderCashbook(); }
@@ -547,9 +672,12 @@ function addPassbookEntry(){
     document.getElementById('pb_payment').value='';
   });
 }
-function deletePassEntry(id){
-  if(!confirm('Delete this entry?')) return;
-  db.collection('passbook').doc(currentBank).collection('entries').doc(id).delete();
+async function deletePassEntry(id){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  if(!(await verifyDeletePassword())) return;
+  if(!confirm('Delete this Pass Book entry permanently?')) return;
+  try{ await db.collection('passbook').doc(currentBank).collection('entries').doc(id).delete(); }
+  catch(err){ alert('Could not delete entry: ' + err.message); }
 }
 function startEditPass(id){ pbEditingId = id; renderPassbook(); }
 function cancelEditPass(){ pbEditingId = null; renderPassbook(); }
@@ -638,9 +766,12 @@ function addVoucher(){
     document.getElementById('v_amount').value='';
   });
 }
-function deleteVoucher(id){
-  if(!confirm('Delete this voucher?')) return;
-  db.collection('vouchers').doc(id).delete();
+async function deleteVoucher(id){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  if(!(await verifyDeletePassword())) return;
+  if(!confirm('Delete this Voucher Register entry permanently?')) return;
+  try{ await db.collection('vouchers').doc(id).delete(); }
+  catch(err){ alert('Could not delete voucher: ' + err.message); }
 }
 function startEditVoucher(id){ vEditingId = id; renderVouchers(); }
 function cancelEditVoucher(){ vEditingId = null; renderVouchers(); }
@@ -728,6 +859,7 @@ async function runImport(){
 }
 
 async function replaceSelectedTarget(){
+  if(!(await verifyDeletePassword())) return;
   const [kind, id] = document.getElementById('replaceTarget').value.split('|');
   const seedArr = SEED[kind][id] || [];
   const label = document.getElementById('replaceTarget').selectedOptions[0].textContent;
@@ -865,7 +997,8 @@ async function importJsonFile(){
     let grandTotal = 0;
 
     if(looksLikeFullBackup){
-      if(mode==='replace' && !confirm('This will DELETE existing entries in every fund/account/voucher list present in the file, then reload from the file. Continue?')) return;
+      if(mode==='replace' && !(await verifyDeletePassword())) return;
+       if(mode==='replace' && !confirm('This will DELETE existing entries in every fund/account/voucher list present in the file, then reload from the file. Continue?')) return;
 
       if(parsed.cashbook){
         for(const fundId of Object.keys(parsed.cashbook)){
@@ -905,6 +1038,7 @@ async function importJsonFile(){
       const ref = db.collection(kind).doc(id).collection('entries');
 
       if(mode==='replace'){
+        if(!(await verifyDeletePassword())) return;
         if(!confirm(`This will DELETE all existing entries under "${label}" and replace them with the ${entries.length} entries from the file. Continue?`)) return;
         await clearCollection(ref, statusEl, label);
       }
