@@ -578,7 +578,10 @@ async function deleteCashEntry(id){
   try{ await db.collection('cashbook').doc(currentFund).collection('entries').doc(id).delete(); }
   catch(err){ alert('Could not delete entry: ' + err.message); }
 }
-function startEditCash(id){ cbEditingId = id; renderCashbook(); }
+async function startEditCash(id){
+  if(!(await verifyDeletePassword())) return;
+  cbEditingId = id; renderCashbook();
+}
 function cancelEditCash(){ cbEditingId = null; renderCashbook(); }
 function saveEditCash(id){
   const date = document.getElementById('cbe_date').value;
@@ -679,7 +682,10 @@ async function deletePassEntry(id){
   try{ await db.collection('passbook').doc(currentBank).collection('entries').doc(id).delete(); }
   catch(err){ alert('Could not delete entry: ' + err.message); }
 }
-function startEditPass(id){ pbEditingId = id; renderPassbook(); }
+async function startEditPass(id){
+  if(!(await verifyDeletePassword())) return;
+  pbEditingId = id; renderPassbook();
+}
 function cancelEditPass(){ pbEditingId = null; renderPassbook(); }
 function saveEditPass(id){
   const date = document.getElementById('pbe_date').value;
@@ -773,7 +779,10 @@ async function deleteVoucher(id){
   try{ await db.collection('vouchers').doc(id).delete(); }
   catch(err){ alert('Could not delete voucher: ' + err.message); }
 }
-function startEditVoucher(id){ vEditingId = id; renderVouchers(); }
+async function startEditVoucher(id){
+  if(!(await verifyDeletePassword())) return;
+  vEditingId = id; renderVouchers();
+}
 function cancelEditVoucher(){ vEditingId = null; renderVouchers(); }
 function saveEditVoucher(id){
   const date = document.getElementById('ve_date').value;
