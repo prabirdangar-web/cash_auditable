@@ -58,6 +58,10 @@
   .badge.warn{background:#e08a00; color:#fff; font-weight:bold;}
   footer.note{text-align:center; font-size:.72rem; color:var(--grey); font-family:Arial,sans-serif; padding:20px 0;}
 
+  .orderBar{display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 10px; font-family:Arial,sans-serif; font-size:.82rem; background:#fff; border:1px solid var(--line); border-radius:6px; padding:8px 12px;}
+  .orderBar b{color:var(--navy);}
+  .orderBar button{padding:6px 14px; border:1px solid var(--navy2); background:#fff; color:var(--navy2); border-radius:14px; font-size:.8rem; cursor:pointer;}
+  .orderBar button.active{background:var(--navy2); color:#fff; font-weight:bold;}
   .deleteSecurityTop{background:#fff3cd;border:3px solid var(--red);border-radius:8px;padding:12px 14px;margin:10px 0;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);}
   .deleteSecurityTop .title{font-size:1rem;font-weight:800;color:var(--red);margin-bottom:7px;}
   .deleteSecurityTop input{padding:10px 12px;border:2px solid var(--red);border-radius:5px;font-size:.95rem;min-width:280px;font-family:Arial,sans-serif;}
@@ -102,6 +106,13 @@
     <button class="tabBtn" data-tab="passbook" onclick="showTab('passbook')">Pass Book</button>
     <button class="tabBtn" data-tab="setup" onclick="showTab('setup')">Setup / Import</button>
   </nav>
+
+  <div class="orderBar noprint">
+    <b>📅 View all records (Cash Book, Voucher Register, Pass Book):</b>
+    <button type="button" id="ord_old" onclick="setViewOrder('old')">⬇ Old → New</button>
+    <button type="button" id="ord_new" onclick="setViewOrder('new')">⬆ New → Old</button>
+    <span style="color:var(--grey);font-size:.75rem;">Running balance always follows true date order.</span>
+  </div>
 
   <div class="deleteSecurityTop noprint">
     <div class="title">🔐 DELETE PASSWORD — REQUIRED FOR ALL DELETIONS</div>
@@ -324,6 +335,23 @@ let cbUnsub = null, pbUnsub = null, vUnsub = null;
 let cbEditingId = null, pbEditingId = null, vEditingId = null;
 let deletePasswordCache = null;
 
+/* ---------- View order (applies to Cash Book, Voucher Register, Pass Book) ---------- */
+let viewOrder = 'old';   // 'old' = oldest first, 'new' = newest first
+try{ const saved = localStorage.getItem('tfhsViewOrder'); if(saved==='old'||saved==='new') viewOrder = saved; }catch(e){}
+function orderRows(rows){ return viewOrder==='new' ? rows.slice().reverse() : rows; }
+function updateOrderButtons(){
+  const o=document.getElementById('ord_old'), n=document.getElementById('ord_new');
+  if(o) o.classList.toggle('active', viewOrder==='old');
+  if(n) n.classList.toggle('active', viewOrder==='new');
+}
+function setViewOrder(mode){
+  viewOrder = mode;
+  try{ localStorage.setItem('tfhsViewOrder', mode); }catch(e){}
+  updateOrderButtons();
+  renderCashbook(); renderPassbook(); renderVouchers();
+}
+updateOrderButtons();
+
 function escapeAttr(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 }
@@ -520,8 +548,8 @@ function renderCashbook(){
   const from = document.getElementById('cb_search_from').value;
   const to = document.getElementById('cb_search_to').value;
   let bal = 0, shown = 0;
-  cbEntries.forEach(e=>{
-    bal += (Number(e.received)||0) - (Number(e.payment)||0);
+  const cbRows = cbEntries.map(e=>{ bal += (Number(e.received)||0) - (Number(e.payment)||0); return {e, rb:bal}; });
+  orderRows(cbRows).forEach(({e, rb})=>{
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(q){
@@ -537,12 +565,12 @@ function renderCashbook(){
         <td><input type="text" id="cbe_vno" value="${escapeAttr(e.vno)}" style="width:70px"></td>
         <td><input type="number" id="cbe_received" value="${e.received!=null?e.received:''}" style="width:90px"></td>
         <td><input type="number" id="cbe_payment" value="${e.payment!=null?e.payment:''}" style="width:90px"></td>
-        <td class="num">${inr(bal)}</td>
+        <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="saveEditCash('${e.id}')">💾</button><button onclick="cancelEditCash()">✖</button></td>`;
     } else {
       tr.innerHTML = `<td>${fmtDMY(e.date)}</td><td>${e.particulars||''}</td><td>${e.vno||''}</td>
         <td class="num recv">${inr(e.received)}</td><td class="num pay">${inr(e.payment)}</td>
-        <td class="num">${inr(bal)}</td>
+        <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="startEditCash('${e.id}')">✏️</button><button onclick="deleteCashEntry('${e.id}')">🗑</button></td>`;
     }
     tbody.appendChild(tr);
@@ -627,8 +655,8 @@ function renderPassbook(){
   const from = document.getElementById('pb_search_from').value;
   const to = document.getElementById('pb_search_to').value;
   let bal = 0, shown = 0;
-  pbEntries.forEach(e=>{
-    bal += (Number(e.received)||0) - (Number(e.payment)||0);
+  const pbRows = pbEntries.map(e=>{ bal += (Number(e.received)||0) - (Number(e.payment)||0); return {e, rb:bal}; });
+  orderRows(pbRows).forEach(({e, rb})=>{
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(q){
@@ -643,12 +671,12 @@ function renderPassbook(){
         <td><input type="text" id="pbe_particulars" value="${escapeAttr(e.particulars)}" style="width:100%"></td>
         <td><input type="number" id="pbe_received" value="${e.received!=null?e.received:''}" style="width:90px"></td>
         <td><input type="number" id="pbe_payment" value="${e.payment!=null?e.payment:''}" style="width:90px"></td>
-        <td class="num">${inr(bal)}</td>
+        <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="saveEditPass('${e.id}')">💾</button><button onclick="cancelEditPass()">✖</button></td>`;
     } else {
       tr.innerHTML = `<td>${fmtDMY(e.date)}</td><td>${e.particulars||''}</td>
         <td class="num recv">${inr(e.received)}</td><td class="num pay">${inr(e.payment)}</td>
-        <td class="num">${inr(bal)}</td>
+        <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="startEditPass('${e.id}')">✏️</button><button onclick="deletePassEntry('${e.id}')">🗑</button></td>`;
     }
     tbody.appendChild(tr);
@@ -703,9 +731,16 @@ function saveEditPass(id){
 /* ---------- Voucher Register ---------- */
 function watchVouchers(){
   if(vUnsub) vUnsub();
-  vUnsub = db.collection('vouchers').orderBy('date','desc').onSnapshot(snap=>{
+  vUnsub = db.collection('vouchers').onSnapshot(snap=>{
     vEntries = [];
     snap.forEach(doc=> vEntries.push({id:doc.id, ...doc.data()}));
+    vEntries.sort((a,b)=>{
+      const da = dateSortKey(a.date), db_ = dateSortKey(b.date);
+      if(da!==db_) return da.localeCompare(db_);
+      const ca = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+      const cb = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+      return ca - cb;
+    });
     renderVouchers();
   }, err=>console.error(err));
 }
@@ -722,7 +757,7 @@ function renderVouchers(){
   const from = document.getElementById('v_search_from').value;
   const to = document.getElementById('v_search_to').value;
   let shown = 0;
-  vEntries.forEach(e=>{
+  orderRows(vEntries).forEach(e=>{
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(q){
