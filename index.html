@@ -62,6 +62,7 @@
   .orderBar b{color:var(--navy);}
   .orderBar button{padding:6px 14px; border:1px solid var(--navy2); background:#fff; color:var(--navy2); border-radius:14px; font-size:.8rem; cursor:pointer;}
   .orderBar button.active{background:var(--navy2); color:#fff; font-weight:bold;}
+  input.dmy{width:120px;}
   .deleteSecurityTop{background:#fff3cd;border:3px solid var(--red);border-radius:8px;padding:12px 14px;margin:10px 0;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);}
   .deleteSecurityTop .title{font-size:1rem;font-weight:800;color:var(--red);margin-bottom:7px;}
   .deleteSecurityTop input{padding:10px 12px;border:2px solid var(--red);border-radius:5px;font-size:.95rem;min-width:280px;font-family:Arial,sans-serif;}
@@ -130,7 +131,7 @@
   <div class="panel active" id="panel-cashbook">
     <div class="subtabs" id="fundTabs"></div>
     <div class="toolbar noprint">
-      <input type="date" id="cb_date">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="cb_date">
       <input type="text" id="cb_particulars" placeholder="Particulars" style="min-width:220px;">
       <input type="text" id="cb_vno" placeholder="V.No" style="width:90px;">
       <input type="number" id="cb_received" placeholder="Received (₹)" style="width:120px;">
@@ -141,9 +142,9 @@
     </div>
     <div class="toolbar noprint searchBar">
       🔎 <input type="text" id="cb_search" placeholder="Search particulars, V.No, amount…" style="min-width:240px;" oninput="renderCashbook()">
-      <input type="date" id="cb_search_from" title="From date" oninput="renderCashbook()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="cb_search_from" title="From date" oninput="renderCashbook()">
       <span>to</span>
-      <input type="date" id="cb_search_to" title="To date" oninput="renderCashbook()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="cb_search_to" title="To date" oninput="renderCashbook()">
       <button class="secondary" onclick="clearCashSearch()">Clear</button>
       <span id="cb_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
     </div>
@@ -158,7 +159,7 @@
   <!-- VOUCHER REGISTER -->
   <div class="panel" id="panel-voucher">
     <div class="toolbar noprint">
-      <input type="date" id="v_date">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="v_date">
       <select id="v_fund"><option value="Development">Development</option><option value="SSM">SSM</option><option value="RMSA">RMSA</option><option value="Hostel Fund">Hostel Fund</option><option value="Vocational">Vocational</option><option value="MDM">MDM</option></select>
       <input type="text" id="v_vno" placeholder="Voucher No" style="width:110px;">
       <input type="text" id="v_payto" placeholder="Pay To" style="min-width:160px;">
@@ -169,9 +170,9 @@
     </div>
     <div class="toolbar noprint searchBar">
       🔎 <input type="text" id="v_search" placeholder="Search V.No, pay to, purpose, amount…" style="min-width:240px;" oninput="renderVouchers()">
-      <input type="date" id="v_search_from" title="From date" oninput="renderVouchers()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="v_search_from" title="From date" oninput="renderVouchers()">
       <span>to</span>
-      <input type="date" id="v_search_to" title="To date" oninput="renderVouchers()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="v_search_to" title="To date" oninput="renderVouchers()">
       <button class="secondary" onclick="clearVoucherSearch()">Clear</button>
       <span id="v_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
     </div>
@@ -188,7 +189,7 @@
   <div class="panel" id="panel-passbook">
     <div class="subtabs" id="bankTabs"></div>
     <div class="toolbar noprint">
-      <input type="date" id="pb_date">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pb_date">
       <input type="text" id="pb_particulars" placeholder="Particulars" style="min-width:220px;">
       <input type="number" id="pb_received" placeholder="Deposit (₹)" style="width:120px;">
       <input type="number" id="pb_payment" placeholder="Withdrawal (₹)" style="width:120px;">
@@ -198,9 +199,9 @@
     </div>
     <div class="toolbar noprint searchBar">
       🔎 <input type="text" id="pb_search" placeholder="Search particulars, amount…" style="min-width:240px;" oninput="renderPassbook()">
-      <input type="date" id="pb_search_from" title="From date" oninput="renderPassbook()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pb_search_from" title="From date" oninput="renderPassbook()">
       <span>to</span>
-      <input type="date" id="pb_search_to" title="To date" oninput="renderPassbook()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pb_search_to" title="To date" oninput="renderPassbook()">
       <button class="secondary" onclick="clearPassSearch()">Clear</button>
       <span id="pb_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
     </div>
@@ -351,6 +352,30 @@ function setViewOrder(mode){
   renderCashbook(); renderPassbook(); renderVouchers();
 }
 updateOrderButtons();
+
+/* ---------- Dates: everything shown/typed as DD-MM-YYYY (stored as YYYY-MM-DD) ---------- */
+function dmyToISO(s){
+  const m=/^(\d{2})-(\d{2})-(\d{4})$/.exec(String(s||'').trim());
+  if(!m) return '';
+  const d=+m[1], mo=+m[2], y=+m[3], dt=new Date(y,mo-1,d);
+  return (dt.getFullYear()===y && dt.getMonth()===mo-1 && dt.getDate()===d) ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+function dmyVal(id){ const el=document.getElementById(id); return el ? dmyToISO(el.value) : ''; }
+function dmyEditVal(id){
+  const raw=(document.getElementById(id).value||'').trim();
+  if(!raw) return '';
+  const iso=dmyToISO(raw);
+  if(!iso){ alert('Enter the date as DD-MM-YYYY (for example 05-04-2026).'); return null; }
+  return iso;
+}
+document.addEventListener('input', e=>{
+  const t=e.target;
+  if(t && t.classList && t.classList.contains('dmy')){
+    const d=t.value.replace(/\D/g,'').slice(0,8);
+    const out = d.length>4 ? d.slice(0,2)+'-'+d.slice(2,4)+'-'+d.slice(4) : d.length>2 ? d.slice(0,2)+'-'+d.slice(2) : d;
+    if(out!==t.value) t.value=out;
+  }
+}, true);
 
 function escapeAttr(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
@@ -545,22 +570,22 @@ function renderCashbook(){
   const tbody = document.getElementById('cb_tbody');
   tbody.innerHTML = '';
   const q = (document.getElementById('cb_search').value||'').trim().toLowerCase();
-  const from = document.getElementById('cb_search_from').value;
-  const to = document.getElementById('cb_search_to').value;
+  const from = dmyVal('cb_search_from');
+  const to = dmyVal('cb_search_to');
   let bal = 0, shown = 0;
   const cbRows = cbEntries.map(e=>{ bal += (Number(e.received)||0) - (Number(e.payment)||0); return {e, rb:bal}; });
   orderRows(cbRows).forEach(({e, rb})=>{
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(q){
-      const hay = [e.particulars, e.vno, e.received, e.payment, e.date].join(' ').toLowerCase();
+      const hay = [e.particulars, e.vno, e.received, e.payment, e.date, fmtDMY(e.date)].join(' ').toLowerCase();
       if(!hay.includes(q)) return;
     }
     shown++;
     const tr = document.createElement('tr');
     if(e.id === cbEditingId){
       const isoDate = (e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date)) ? e.date : '';
-      tr.innerHTML = `<td><input type="date" id="cbe_date" value="${isoDate}" style="width:130px"></td>
+      tr.innerHTML = `<td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="cbe_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
         <td><input type="text" id="cbe_particulars" value="${escapeAttr(e.particulars)}" style="width:100%"></td>
         <td><input type="text" id="cbe_vno" value="${escapeAttr(e.vno)}" style="width:70px"></td>
         <td><input type="number" id="cbe_received" value="${e.received!=null?e.received:''}" style="width:90px"></td>
@@ -581,12 +606,12 @@ function renderCashbook(){
   else info.textContent = '';
 }
 function addCashEntry(){
-  const date = document.getElementById('cb_date').value;
+  const date = dmyVal('cb_date');
   const particulars = document.getElementById('cb_particulars').value.trim();
   const vno = document.getElementById('cb_vno').value.trim();
   const received = document.getElementById('cb_received').value;
   const payment = document.getElementById('cb_payment').value;
-  if(!date || !particulars){ alert('Date and Particulars are required.'); return; }
+  if(!date || !particulars){ alert('A valid Date (DD-MM-YYYY) and Particulars are required.'); return; }
   db.collection('cashbook').doc(currentFund).collection('entries').add({
     date, particulars, vno: vno||null,
     received: received? Number(received): null,
@@ -612,7 +637,7 @@ async function startEditCash(id){
 }
 function cancelEditCash(){ cbEditingId = null; renderCashbook(); }
 function saveEditCash(id){
-  const date = document.getElementById('cbe_date').value;
+  const date = dmyEditVal('cbe_date'); if(date===null) return;
   const particulars = document.getElementById('cbe_particulars').value.trim();
   const vno = document.getElementById('cbe_vno').value.trim();
   const received = document.getElementById('cbe_received').value;
@@ -652,22 +677,22 @@ function renderPassbook(){
   const tbody = document.getElementById('pb_tbody');
   tbody.innerHTML = '';
   const q = (document.getElementById('pb_search').value||'').trim().toLowerCase();
-  const from = document.getElementById('pb_search_from').value;
-  const to = document.getElementById('pb_search_to').value;
+  const from = dmyVal('pb_search_from');
+  const to = dmyVal('pb_search_to');
   let bal = 0, shown = 0;
   const pbRows = pbEntries.map(e=>{ bal += (Number(e.received)||0) - (Number(e.payment)||0); return {e, rb:bal}; });
   orderRows(pbRows).forEach(({e, rb})=>{
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(q){
-      const hay = [e.particulars, e.received, e.payment, e.date].join(' ').toLowerCase();
+      const hay = [e.particulars, e.received, e.payment, e.date, fmtDMY(e.date)].join(' ').toLowerCase();
       if(!hay.includes(q)) return;
     }
     shown++;
     const tr = document.createElement('tr');
     if(e.id === pbEditingId){
       const isoDate = (e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date)) ? e.date : '';
-      tr.innerHTML = `<td><input type="date" id="pbe_date" value="${isoDate}" style="width:130px"></td>
+      tr.innerHTML = `<td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pbe_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
         <td><input type="text" id="pbe_particulars" value="${escapeAttr(e.particulars)}" style="width:100%"></td>
         <td><input type="number" id="pbe_received" value="${e.received!=null?e.received:''}" style="width:90px"></td>
         <td><input type="number" id="pbe_payment" value="${e.payment!=null?e.payment:''}" style="width:90px"></td>
@@ -687,11 +712,11 @@ function renderPassbook(){
   else info.textContent = '';
 }
 function addPassbookEntry(){
-  const date = document.getElementById('pb_date').value;
+  const date = dmyVal('pb_date');
   const particulars = document.getElementById('pb_particulars').value.trim();
   const received = document.getElementById('pb_received').value;
   const payment = document.getElementById('pb_payment').value;
-  if(!date || !particulars){ alert('Date and Particulars are required.'); return; }
+  if(!date || !particulars){ alert('A valid Date (DD-MM-YYYY) and Particulars are required.'); return; }
   db.collection('passbook').doc(currentBank).collection('entries').add({
     date, particulars,
     received: received? Number(received): null,
@@ -716,7 +741,7 @@ async function startEditPass(id){
 }
 function cancelEditPass(){ pbEditingId = null; renderPassbook(); }
 function saveEditPass(id){
-  const date = document.getElementById('pbe_date').value;
+  const date = dmyEditVal('pbe_date'); if(date===null) return;
   const particulars = document.getElementById('pbe_particulars').value.trim();
   const received = document.getElementById('pbe_received').value;
   const payment = document.getElementById('pbe_payment').value;
@@ -754,14 +779,14 @@ function renderVouchers(){
   const tbody = document.getElementById('v_tbody');
   tbody.innerHTML = '';
   const q = (document.getElementById('v_search').value||'').trim().toLowerCase();
-  const from = document.getElementById('v_search_from').value;
-  const to = document.getElementById('v_search_to').value;
+  const from = dmyVal('v_search_from');
+  const to = dmyVal('v_search_to');
   let shown = 0;
   orderRows(vEntries).forEach(e=>{
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(q){
-      const hay = [e.vno, e.fund, e.payTo, e.purpose, e.amount, e.date].join(' ').toLowerCase();
+      const hay = [e.vno, e.fund, e.payTo, e.purpose, e.amount, e.date, fmtDMY(e.date)].join(' ').toLowerCase();
       if(!hay.includes(q)) return;
     }
     shown++;
@@ -771,7 +796,7 @@ function renderVouchers(){
       const fundOpts = FUNDS.map(f=>`<option value="${f.label}" ${f.label===e.fund?'selected':''}>${f.label}</option>`).join('');
       tr.innerHTML = `<td></td>
         <td><input type="text" id="ve_vno" value="${escapeAttr(e.vno)}" style="width:70px"></td>
-        <td><input type="date" id="ve_date" value="${isoDate}" style="width:130px"></td>
+        <td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="ve_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
         <td><select id="ve_fund">${fundOpts}</select></td>
         <td><input type="text" id="ve_payto" value="${escapeAttr(e.payTo)}" style="width:100%"></td>
         <td><input type="text" id="ve_purpose" value="${escapeAttr(e.purpose)}" style="width:100%"></td>
@@ -790,13 +815,13 @@ function renderVouchers(){
   else info.textContent = '';
 }
 function addVoucher(){
-  const date = document.getElementById('v_date').value;
+  const date = dmyVal('v_date');
   const fund = document.getElementById('v_fund').value;
   const vno = document.getElementById('v_vno').value.trim();
   const payTo = document.getElementById('v_payto').value.trim();
   const purpose = document.getElementById('v_purpose').value.trim();
   const amount = document.getElementById('v_amount').value;
-  if(!date || !payTo || !amount){ alert('Date, Pay To and Amount are required.'); return; }
+  if(!date || !payTo || !amount){ alert('A valid Date (DD-MM-YYYY), Pay To and Amount are required.'); return; }
   db.collection('vouchers').add({
     date, fund, vno: vno||null, payTo, purpose: purpose||null, amount: Number(amount),
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -820,7 +845,7 @@ async function startEditVoucher(id){
 }
 function cancelEditVoucher(){ vEditingId = null; renderVouchers(); }
 function saveEditVoucher(id){
-  const date = document.getElementById('ve_date').value;
+  const date = dmyEditVal('ve_date'); if(date===null) return;
   const fund = document.getElementById('ve_fund').value;
   const vno = document.getElementById('ve_vno').value.trim();
   const payTo = document.getElementById('ve_payto').value.trim();
