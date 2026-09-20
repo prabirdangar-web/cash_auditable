@@ -63,6 +63,10 @@
   .orderBar button{padding:6px 14px; border:1px solid var(--navy2); background:#fff; color:var(--navy2); border-radius:14px; font-size:.8rem; cursor:pointer;}
   .orderBar button.active{background:var(--navy2); color:#fff; font-weight:bold;}
   input.dmy{width:120px;}
+  .mdmBox{background:#eaf4ea; border:1px solid var(--green); border-radius:6px; padding:8px 10px; font-size:.82rem;}
+  .fcTag{display:inline-block; margin-left:6px; padding:1px 7px; border-radius:10px; background:var(--green); color:#fff; font-size:.68rem; font-weight:bold; white-space:nowrap;}
+  [contenteditable="true"].editableDesc{outline:1px dashed var(--gold); padding:2px 4px; min-height:1.2em;}
+  @media print{[contenteditable="true"].editableDesc{outline:none;}}
   .deleteSecurityTop{background:#fff3cd;border:3px solid var(--red);border-radius:8px;padding:12px 14px;margin:10px 0;font-family:Arial,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.12);}
   .deleteSecurityTop .title{font-size:1rem;font-weight:800;color:var(--red);margin-bottom:7px;}
   .deleteSecurityTop input{padding:10px 12px;border:2px solid var(--red);border-radius:5px;font-size:.95rem;min-width:280px;font-family:Arial,sans-serif;}
@@ -160,13 +164,18 @@
   <div class="panel" id="panel-voucher">
     <div class="toolbar noprint">
       <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="v_date">
-      <select id="v_fund"><option value="Development">Development</option><option value="SSM">SSM</option><option value="RMSA">RMSA</option><option value="Hostel Fund">Hostel Fund</option><option value="Vocational">Vocational</option><option value="MDM">MDM</option></select>
+      <select id="v_fund" onchange="toggleMdmFields()"><option value="Development">Development</option><option value="SSM">SSM</option><option value="RMSA">RMSA</option><option value="Hostel Fund">Hostel Fund</option><option value="Vocational">Vocational</option><option value="MDM">MDM</option></select>
       <input type="text" id="v_vno" placeholder="Voucher No" style="width:110px;">
       <input type="text" id="v_payto" placeholder="Pay To" style="min-width:160px;">
       <input type="text" id="v_purpose" placeholder="Purpose / Particulars" style="min-width:220px;">
       <input type="number" id="v_amount" placeholder="Amount (₹)" style="width:120px;">
       <button onclick="addVoucher()">+ Add Voucher</button>
       <button class="secondary" onclick="printVoucher()">🖨 Print Selected</button>
+    </div>
+    <div class="toolbar noprint mdmBox" id="v_mdm_extra" style="display:none;">
+      <b>MDM:</b> No HOI Report / Admin Order needed — payment &amp; cheque issue go to the Finance Committee.
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="F.C. Meeting Date (DD-MM-YYYY)" id="v_fcdate" style="width:210px;">
+      <input type="text" id="v_fcnote" style="min-width:340px;" title="Editable description / note">
     </div>
     <div class="toolbar noprint searchBar">
       🔎 <input type="text" id="v_search" placeholder="Search V.No, pay to, purpose, amount…" style="min-width:240px;" oninput="renderVouchers()">
@@ -799,13 +808,13 @@ function renderVouchers(){
         <td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="ve_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
         <td><select id="ve_fund">${fundOpts}</select></td>
         <td><input type="text" id="ve_payto" value="${escapeAttr(e.payTo)}" style="width:100%"></td>
-        <td><input type="text" id="ve_purpose" value="${escapeAttr(e.purpose)}" style="width:100%"></td>
+        <td><input type="text" id="ve_purpose" value="${escapeAttr(e.purpose)}" style="width:100%">${e.fund==='MDM'?`<input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="F.C. Meeting DD-MM-YYYY" id="ve_fcdate" value="${fmtDMY((e.fcDate&&/^\d{4}-\d{2}-\d{2}$/.test(e.fcDate))?e.fcDate:'')}" style="width:100%;margin-top:4px"><input type="text" id="ve_fcnote" value="${escapeAttr(e.fcNote||MDM_DEFAULT_NOTE)}" style="width:100%;margin-top:4px">`:''}</td>
         <td><input type="number" id="ve_amount" value="${e.amount!=null?e.amount:''}" style="width:90px"></td>
         <td class="noprint rowActions"><button onclick="saveEditVoucher('${e.id}')">💾</button><button onclick="cancelEditVoucher()">✖</button></td>`;
     } else {
       tr.innerHTML = `<td><input type="radio" name="vsel" value="${e.id}"></td>
-        <td>${e.vno||''}</td><td>${fmtDMY(e.date)}</td><td>${e.fund||''}</td>
-        <td>${e.payTo||''}</td><td>${e.purpose||''}</td><td class="num">${inr(e.amount)}</td>
+        <td>${e.vno||''}</td><td>${fmtDMY(e.date)}</td><td>${e.fund||''}${e.fund==='MDM'?'<span class="fcTag" title="No HOI/Admin order — Finance Committee issues payment">→ Finance Committee</span>':''}</td>
+        <td>${e.payTo||''}</td><td>${e.purpose||''}${(e.fund==='MDM' && e.fcDate)?'<div style="font-size:.72rem;color:var(--grey);">F.C. Meeting: '+fmtDMY(e.fcDate)+'</div>':''}</td><td class="num">${inr(e.amount)}</td>
         <td class="noprint rowActions"><button onclick="startEditVoucher('${e.id}')">✏️</button><button onclick="deleteVoucher('${e.id}')">🗑</button></td>`;
     }
     tbody.appendChild(tr);
@@ -813,6 +822,13 @@ function renderVouchers(){
   const info = document.getElementById('v_matchInfo');
   if(q || from || to) info.textContent = `Showing ${shown} of ${vEntries.length} vouchers`;
   else info.textContent = '';
+}
+const MDM_DEFAULT_NOTE = 'MDM expenditure — placed before Finance Committee meeting for approval, payment and cheque issue.';
+function toggleMdmFields(){
+  const isMdm = document.getElementById('v_fund').value === 'MDM';
+  document.getElementById('v_mdm_extra').style.display = isMdm ? 'flex' : 'none';
+  const note = document.getElementById('v_fcnote');
+  if(isMdm && !note.value) note.value = MDM_DEFAULT_NOTE;
 }
 function addVoucher(){
   const date = dmyVal('v_date');
@@ -822,10 +838,19 @@ function addVoucher(){
   const purpose = document.getElementById('v_purpose').value.trim();
   const amount = document.getElementById('v_amount').value;
   if(!date || !payTo || !amount){ alert('A valid Date (DD-MM-YYYY), Pay To and Amount are required.'); return; }
-  db.collection('vouchers').add({
+  const rec = {
     date, fund, vno: vno||null, payTo, purpose: purpose||null, amount: Number(amount),
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
-  }).then(()=>{
+  };
+  if(fund === 'MDM'){
+    // MDM: no HOI report / admin order; whole payment + cheque issue handled by Finance Committee
+    rec.route = 'Finance Committee';
+    rec.fcDate = dmyVal('v_fcdate') || null;
+    rec.fcNote = document.getElementById('v_fcnote').value.trim() || MDM_DEFAULT_NOTE;
+  }
+  db.collection('vouchers').add(rec).then(()=>{
+    document.getElementById('v_fcdate').value='';
+    document.getElementById('v_fcnote').value = (fund==='MDM') ? MDM_DEFAULT_NOTE : '';
     document.getElementById('v_vno').value='';
     document.getElementById('v_payto').value='';
     document.getElementById('v_purpose').value='';
@@ -852,16 +877,43 @@ function saveEditVoucher(id){
   const purpose = document.getElementById('ve_purpose').value.trim();
   const amount = document.getElementById('ve_amount').value;
   if(!payTo || !amount){ alert('Pay To and Amount are required.'); return; }
-  db.collection('vouchers').doc(id).update({
+  const upd = {
     date: date || null, fund, vno: vno||null, payTo, purpose: purpose||null,
     amount: Number(amount)
-  }).then(()=>{ vEditingId = null; });
+  };
+  if(fund === 'MDM'){
+    const fcEl = document.getElementById('ve_fcdate');
+    const fnEl = document.getElementById('ve_fcnote');
+    upd.route = 'Finance Committee';
+    if(fcEl){ const fd = dmyEditVal('ve_fcdate'); if(fd===null) return; upd.fcDate = fd || null; }
+    upd.fcNote = (fnEl && fnEl.value.trim()) || MDM_DEFAULT_NOTE;
+  } else {
+    upd.route = firebase.firestore.FieldValue.delete();
+    upd.fcDate = firebase.firestore.FieldValue.delete();
+    upd.fcNote = firebase.firestore.FieldValue.delete();
+  }
+  db.collection('vouchers').doc(id).update(upd).then(()=>{ vEditingId = null; });
 }
 function printVoucher(){
   const sel = document.querySelector('input[name="vsel"]:checked');
   if(!sel){ alert('Select a voucher row first (radio button on the left).'); return; }
   const e = vEntries.find(x=>x.id===sel.value);
   const area = document.getElementById('voucherPrintArea');
+  const isMdm = e.fund === 'MDM';
+  const descCell = isMdm
+    ? `<span class="editableDesc" contenteditable="true">${e.purpose||''}</span>`
+    : (e.purpose||'');
+  const footer = isMdm
+    ? `<div style="margin-top:14px;font-size:.8rem;border:1px dashed var(--grey);padding:8px;">
+         <b>Finance Committee:</b> <span class="editableDesc" contenteditable="true">${e.fcNote||MDM_DEFAULT_NOTE}</span><br>
+         <b>F.C. Meeting Date:</b> ${e.fcDate?fmtDMY(e.fcDate):'____ / ____ / ________'} &nbsp;&nbsp; <b>Cheque No.:</b> ____________ &nbsp;&nbsp; <b>Cheque Date:</b> ____ / ____ / ________
+       </div>
+       <div style="display:flex;justify-content:space-between;margin-top:60px;">
+         <div>Signature of Payee</div><div>Approved &amp; Cheque Issued — Finance Committee</div>
+       </div>`
+    : `<div style="display:flex;justify-content:space-between;margin-top:60px;">
+         <div>Signature of Payee</div><div>Passed for Payment — Headmaster</div>
+       </div>`;
   area.innerHTML = `
     <h2>TALDANGRA FULMATI HIGH SCHOOL [H.S.]</h2>
     <div class="addr">P.O. Taldangra, Block-Taldangra, Sub. Div. Khatra, Dist. Bankura</div>
@@ -869,12 +921,10 @@ function printVoucher(){
       <tr><td><b>Voucher No.</b></td><td>${e.vno||''}</td><td><b>Date</b></td><td>${fmtDMY(e.date)}</td></tr>
       <tr><td><b>Fund / Category</b></td><td colspan="3">${e.fund||''}</td></tr>
       <tr><td><b>Pay To</b></td><td colspan="3">${e.payTo||''}</td></tr>
-      <tr><td><b>Purpose / Particulars</b></td><td colspan="3">${e.purpose||''}</td></tr>
+      <tr><td><b>Purpose / Particulars</b></td><td colspan="3">${descCell}</td></tr>
       <tr><td><b>Amount (Rs.)</b></td><td colspan="3" style="font-size:1.1rem;font-weight:bold;">${inr(e.amount)}</td></tr>
     </table>
-    <div style="display:flex;justify-content:space-between;margin-top:60px;">
-      <div>Signature of Payee</div><div>Passed for Payment — Headmaster</div>
-    </div>`;
+    ${footer}`;
   area.style.display = 'block';
   document.getElementById('panel-voucher').classList.add('printing');
   window.print();
