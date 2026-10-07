@@ -77,6 +77,27 @@
     .panel.printing{display:block !important;}
     .tableWrap{max-height:none; overflow:visible; border:none;}
   }
+
+  /* ===== Suggestions + Report ===== */
+  .sug-box{position:fixed;z-index:9999;background:#fff;border:1px solid var(--navy2);border-radius:5px;box-shadow:0 6px 18px rgba(0,0,0,.25);max-height:300px;overflow:auto;font-family:Arial,sans-serif}
+  .sug-head{padding:4px 8px;font-size:.68rem;color:var(--grey);background:#eef1f7;border-bottom:1px solid var(--line)}
+  .sug-item{padding:6px 8px;cursor:pointer;border-bottom:1px solid #eee;font-size:.82rem}.sug-item.on,.sug-item:hover{background:#dbe7fb}
+  .sug-item .st{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.sug-item .sm{font-size:.68rem;color:var(--grey);margin-top:2px}
+  .rep-sheet{background:#fff;border:1px solid var(--line);padding:12px;overflow:auto;margin-top:10px;color:#000}
+  .rep-title{text-align:center;font-weight:700;font-family:Arial,sans-serif}.rep-title .t1{font-size:1.05rem}.rep-title .t2{font-size:.9rem;margin-top:2px}.rep-title .t3{font-size:.75rem;margin:3px 0 10px;font-weight:400}
+  .rep-tbl{width:100%;border-collapse:collapse;font-size:.75rem;color:#000;font-family:Arial,sans-serif}.rep-tbl.fixed{table-layout:fixed}
+  .rep-tbl th,.rep-tbl td{border:1px solid #000;padding:3px 5px;vertical-align:top;overflow-wrap:anywhere;text-transform:none;letter-spacing:0}
+  .rep-tbl th{background:#e3e9f3;color:#000;text-align:center;position:static}.rep-tbl tr:nth-child(even){background:none}
+  .rep-tbl td.n{text-align:right;white-space:nowrap}.rep-tbl tr.tot td{font-weight:700;background:#f1f1f1}.rep-tbl tr.sub td{font-weight:700;background:#fff7dc}.rep-tbl .neg{color:#b00020}
+  .rep-fund{font-weight:700;margin:14px 0 4px;font-size:.85rem;font-family:Arial,sans-serif}.rep-note{font-size:.7rem;margin-top:6px;font-family:Arial,sans-serif}
+  .rep-sign{display:flex;justify-content:space-between;margin-top:30px;font-size:.78rem;font-family:Arial,sans-serif}
+  #reportPrintRoot{display:none}
+  @media print{
+    body.print-report{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body.print-report #app,body.print-report header.top,body.print-report #loginScreen,body.print-report footer{display:none!important}
+    body.print-report #reportPrintRoot{display:block}
+    body.print-report .rep-tbl tr{break-inside:avoid}body.print-report .rep-fund{break-after:avoid}
+  }
 </style>
 </head>
 <body>
@@ -105,6 +126,7 @@
     <button class="tabBtn active" data-tab="cashbook" onclick="showTab('cashbook')">Cash Book</button>
     <button class="tabBtn" data-tab="voucher" onclick="showTab('voucher')">Voucher Register</button>
     <button class="tabBtn" data-tab="passbook" onclick="showTab('passbook')">Pass Book</button>
+    <button class="tabBtn" data-tab="report" onclick="showTab('report');repInit()">📑 Report</button>
     <button class="tabBtn" data-tab="setup" onclick="showTab('setup')">Setup / Import</button>
   </nav>
 
@@ -213,6 +235,22 @@
     </div>
   </div>
 
+  <!-- REPORT -->
+  <div class="panel" id="panel-report">
+    <div class="toolbar noprint">
+      <select id="rp_type" onchange="repGenerate()"><option value="synopsis">Synopsis — fund-wise summary (Receipt | Payment)</option><option value="demand">Demand / Detailed statement (Income side | Expenditure side)</option></select>
+      <select id="rp_scope" onchange="repGenerate()"></select>
+      <label style="font-size:.8rem">Up to <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="rp_to" oninput="repGenerate()"></label>
+      <label style="font-size:.8rem">From <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="blank = beginning" id="rp_from" oninput="repGenerate()"></label>
+      <label style="font-size:.8rem"><input type="checkbox" id="rp_skip" checked onchange="repGenerate()"> Skip empty accounts</label>
+      <button onclick="repGenerate()">📑 Generate</button>
+      <button class="secondary" onclick="repPrint()">🖨 Print / Save PDF</button>
+      <button class="secondary" onclick="repExcel()">📥 Excel</button>
+    </div>
+    <div id="rp_status" style="font-family:Arial,sans-serif;font-size:.78rem;color:var(--grey)"></div>
+    <div class="rep-sheet" id="rp_out"></div>
+  </div>
+
   <!-- SETUP -->
   <div class="panel" id="panel-setup">
     <div class="setupBox">
@@ -296,6 +334,7 @@
 </div>
 
 <footer class="note noprint">Taldangra Fulmati High School [H.S.] — internal accounts tool. Synced live via Firebase.</footer>
+<div id="reportPrintRoot"></div>
 
 <script>
 /* ======================= FIREBASE CONFIG ======================= */
@@ -405,6 +444,7 @@ auth.onAuthStateChanged(user=>{
     watchCashbook(currentFund);
     watchPassbook(currentBank);
     watchVouchers();
+    repWatchAll();
   } else {
     document.getElementById('loginScreen').style.display='block';
     document.getElementById('app').style.display='none';
@@ -1150,6 +1190,165 @@ const SEED = {
     ]
   }
 };
+</script>
+<script>
+/* ===== Data of ALL funds / pass books (for suggestions + reports) ===== */
+const ALLD={cb:{},pb:{}},ALLU=[];let SUGV=0;
+const rSrt=(a,b)=>{const da=dateSortKey(a.date),db2=dateSortKey(b.date);if(da!==db2)return da.localeCompare(db2);
+ const ca=a.createdAt&&a.createdAt.toMillis?a.createdAt.toMillis():0,cb=b.createdAt&&b.createdAt.toMillis?b.createdAt.toMillis():0;return ca-cb;};
+function repWatchAll(){
+ ALLU.splice(0).forEach(u=>{try{u();}catch(e){}});
+ const mk=(kind,coll,id)=>ALLU.push(db.collection(coll).doc(id).collection('entries').onSnapshot(snap=>{
+  const a=[];snap.forEach(d=>a.push({id:d.id,...d.data()}));a.sort(rSrt);ALLD[kind][id]=a;SUGV++;
+  if(document.getElementById('panel-report').classList.contains('active')) repGenerate();
+ },err=>console.error(err)));
+ FUNDS.forEach(f=>mk('cb','cashbook',f.id));BANKS.forEach(b=>mk('pb','passbook',b.id));
+}
+
+/* ===== Suggestions from earlier saved entries (Cash Books + Pass Books + Vouchers) ===== */
+const SUG={key:null,parts:[],payees:[]};
+const rEsc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function sugBuild(){
+ const key=SUGV+'|'+(vEntries&&vEntries.length)+'|'+(vEntries&&vEntries[0]&&vEntries[0].id);
+ if(SUG.key===key) return; SUG.key=key;
+ const all=[];
+ Object.keys(ALLD.cb).forEach(k=>ALLD.cb[k].forEach(e=>all.push({...e,_s:'cb|'+k})));
+ Object.keys(ALLD.pb).forEach(k=>ALLD.pb[k].forEach(e=>all.push({...e,_s:'pb|'+k})));
+ vEntries.forEach(e=>all.push({...e,_s:'v|'+(e.fund||'')}));
+ all.sort(rSrt);
+ const P=new Map(),T=new Map();
+ all.forEach(x=>{
+  const p=String(x.particulars||x.purpose||'').replace(/\s+/g,' ').trim(),t=String(x.payTo||'').replace(/\s+/g,' ').trim();
+  if(p){const o=P.get(p.toLowerCase());P.set(p.toLowerCase(),{text:p,last:x,count:(o?o.count:0)+1});}
+  if(t){const o=T.get(t.toLowerCase());T.set(t.toLowerCase(),{text:t,last:x,count:(o?o.count:0)+1});}
+ });
+ SUG.parts=[...P.values()];SUG.payees=[...T.values()];
+}
+function sugMatch(list,q,pref){
+ const toks=q.toLowerCase().split(/\s+/).filter(Boolean),out=[];
+ list.forEach(o=>{const lc=o.text.toLowerCase();if(!toks.every(t=>lc.includes(t)))return;
+  out.push({o,s:(lc.startsWith(toks[0])?30:0)+(pref(o.last)?20:0)+Math.min(o.count,10)});});
+ return out.sort((a,b)=>b.s-a.s||rSrt(b.o.last,a.o.last)).slice(0,8).map(z=>z.o);
+}
+function sugLabel(s){const [k,i]=String(s).split('|');
+ return k==='cb'?'Cash Book · '+(FUNDS.find(f=>f.id===i)?.label||i):k==='pb'?'Pass Book · '+(BANKS.find(b=>b.id===i)?.label||i):'Voucher · '+i;}
+function sugAmt(x){return x.amount!=null?'Voucher ₹'+inr(x.amount):(Number(x.payment)>0?'Pay ₹'+inr(x.payment):'Rec ₹'+inr(x.received));}
+function sugAttach(id,kind,pref,onPick){
+ const el=document.getElementById(id);if(!el)return;
+ const box=document.createElement('div');box.className='sug-box';box.style.display='none';document.body.appendChild(box);
+ let items=[],act=-1;
+ const hide=()=>{box.style.display='none';items=[];act=-1;};
+ const mark=()=>[...box.querySelectorAll('.sug-item')].forEach((d,i)=>d.classList.toggle('on',i===act));
+ function show(){
+  const q=el.value.replace(/\s+/g,' ').trim();if(q.length<2){hide();return;}
+  sugBuild();items=sugMatch(kind==='payto'?SUG.payees:SUG.parts,q,pref);act=-1;if(!items.length){hide();return;}
+  box.innerHTML='<div class="sug-head">From earlier entries (all funds, pass books, vouchers) — click or ↑↓ Enter · Esc closes</div>'+items.map((o,i)=>`<div class="sug-item" data-i="${i}"><div class="st">${rEsc(o.text)}</div><div class="sm">${rEsc(sugLabel(o.last._s))} · ${rEsc(fmtDMY(o.last.date))} · ${sugAmt(o.last)} · used ${o.count}×</div></div>`).join('');
+  const r=el.getBoundingClientRect();box.style.left=r.left+'px';box.style.top=(r.bottom+2)+'px';box.style.width=Math.max(r.width,340)+'px';box.style.display='block';
+ }
+ const pick=o=>{el.value=o.text;if(onPick)onPick(o);hide();el.focus();};
+ box.addEventListener('mousedown',e=>{e.preventDefault();const d=e.target.closest('.sug-item');if(d)pick(items[+d.dataset.i]);});
+ el.addEventListener('input',show);el.addEventListener('blur',()=>setTimeout(hide,120));
+ window.addEventListener('scroll',hide,true);window.addEventListener('resize',hide);
+ el.addEventListener('keydown',e=>{if(box.style.display==='none')return;
+  if(e.key==='ArrowDown'){e.preventDefault();act=(act+1)%items.length;mark();}
+  else if(e.key==='ArrowUp'){e.preventDefault();act=(act<=0?items.length:act)-1;mark();}
+  else if(e.key==='Enter'&&act>=0){e.preventDefault();pick(items[act]);}
+  else if(e.key==='Escape')hide();});
+}
+sugAttach('cb_particulars','part',x=>x._s==='cb|'+currentFund);
+sugAttach('pb_particulars','part',x=>x._s==='pb|'+currentBank);
+const vPref=x=>x._s==='v|'+document.getElementById('v_fund').value;
+sugAttach('v_purpose','part',vPref,o=>{const pt=document.getElementById('v_payto');if(!pt.value.trim()&&o.last.payTo)pt.value=o.last.payTo;});
+sugAttach('v_payto','payto',vPref);
+
+/* ===== Report: Synopsis / Demand — Receipt (Income) side | Payment (Expenditure) side, fund-wise ===== */
+const FUND_BANK={development:'dev_bank',ssm:'ssa_sbi',hostel:'hostel_fund',vocational:'voc_bank',mdm:'mdm_bank'};
+function repGroups(){
+ const used=new Set(),G=[];
+ FUNDS.forEach(f=>{const bk=BANKS.find(b=>b.id===FUND_BANK[f.id]),accs=[{kind:'cb',id:f.id,label:'Cash Book'}];
+  if(bk){accs.push({kind:'pb',id:bk.id,label:'Pass Book — '+bk.label});used.add(bk.id);}G.push({id:f.id,label:f.label,accs});});
+ BANKS.filter(b=>!used.has(b.id)).forEach(b=>G.push({id:b.id,label:b.label,accs:[{kind:'pb',id:b.id,label:'Pass Book'}]}));
+ return G;
+}
+const f2=n=>(Number(n)||0).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+const nc=n=>`<td class="n${n<0?' neg':''}">${f2(n)}</td>`;
+let repHTML='',repData=null;
+function repInit(){
+ const s=document.getElementById('rp_scope');
+ if(s&&!s.options.length){s.add(new Option('All funds (Cash Book + Pass Book)','all'));s.add(new Option('All Cash Books only','cash'));s.add(new Option('All Pass Books only','bank'));
+  repGroups().forEach(g=>s.add(new Option('Fund: '+g.label+(g.accs.length>1?' (Cash + Pass Book)':''),g.id)));}
+ const t=document.getElementById('rp_to');if(t&&!t.value){const d=new Date();t.value=String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+d.getFullYear();}
+ repGenerate();
+}
+function repAcc(a,from,to){
+ let open=0,rec=0,pay=0;const rows=[];
+ (ALLD[a.kind][a.id]||[]).forEach(e=>{const d=dateSortKey(e.date),r=Number(e.received)||0,p=Number(e.payment)||0;
+  if(from&&d<from)open+=r-p;else if(d<=to){rec+=r;pay+=p;rows.push(e);}});
+ return {...a,open,rec,pay,close:open+rec-pay,rows};
+}
+function repCompute(){
+ const fr=document.getElementById('rp_from').value.trim(),tr=document.getElementById('rp_to').value.trim();
+ const from=fr?dmyToISO(fr):'',to=tr?dmyToISO(tr):'9999-12-31';
+ if((fr&&!from)||(tr&&!to))return {err:'Enter dates as DD-MM-YYYY.'};
+ if(from&&to<from)return {err:'"Up to" date is before "From" date.'};
+ const sc=document.getElementById('rp_scope').value||'all',skip=document.getElementById('rp_skip').checked,specific=!['all','cash','bank'].includes(sc);
+ const groups=repGroups().filter(g=>specific?g.id===sc:true).map(g=>({label:g.label,accs:g.accs
+  .filter(a=>sc==='cash'?a.kind==='cb':sc==='bank'?a.kind==='pb':true).map(a=>repAcc(a,from,to))
+  .filter(a=>specific||!skip||a.open||a.rec||a.pay)})).filter(g=>g.accs.length);
+ return {from,to:tr?to:'',fromRaw:from,groups,scopeLabel:document.getElementById('rp_scope').selectedOptions[0]?.text||''};
+}
+function repHead(D,type){
+ const per=D.from?`Period: ${fmtDMY(D.from)} to ${D.to?fmtDMY(D.to):'date'}`:`Up to date: ${D.to?fmtDMY(D.to):'today'} (from the beginning)`;
+ return `<div class="rep-title"><div class="t1">Taldangra Fulmati High School [H.S.]</div><div class="t2">Receipt &amp; Payment — ${type==='demand'?'Demand / Detailed Statement':'Synopsis'} (Fund-wise)</div><div class="t3">${per} · ${rEsc(D.scopeLabel)} · Amount in ₹</div></div>`;
+}
+function repSyn(D){
+ const T={o:0,r:0,p:0,c:0};let h='',n=0;
+ const row=(cls,a,b,o,r,p,c)=>`<tr class="${cls}">${a}${b}${nc(o)}${nc(r)}${nc(o+r)}${nc(p)}${nc(c)}${nc(p+c)}</tr>`;
+ D.groups.forEach(g=>{const S={o:0,r:0,p:0,c:0};
+  g.accs.forEach((a,i)=>{n++;T.o+=a.open;T.r+=a.rec;T.p+=a.pay;T.c+=a.close;S.o+=a.open;S.r+=a.rec;S.p+=a.pay;S.c+=a.close;
+   h+=row('',`<td>${i?'':rEsc(g.label)}</td>`,`<td>${rEsc(a.label)}</td>`,a.open,a.rec,a.pay,a.close);});
+  if(g.accs.length>1) h+=row('sub','<td colspan="2">'+rEsc(g.label)+' — Fund total (Cash + Bank)</td>','',S.o,S.r,S.p,S.c).replace('<td colspan="2">','<td colspan="2">').replace('</td></td>','</td>');
+ });
+ return `<table class="rep-tbl"><thead><tr><th rowspan="2">Fund</th><th rowspan="2">Account</th><th colspan="3">RECEIPT / INCOME SIDE</th><th colspan="3">PAYMENT / EXPENDITURE SIDE</th></tr><tr><th>Opening Balance</th><th>Receipts</th><th>Total</th><th>Payments</th><th>Closing Balance</th><th>Total</th></tr></thead><tbody>${h||'<tr><td colspan="8">No data.</td></tr>'}${row('tot','<td colspan="2">GRAND TOTAL</td>','',T.o,T.r,T.p,T.c)}</tbody></table><div class="rep-note">Note: cash drawn from / deposited to the bank appears in both the Cash Book and the Pass Book, so Grand Total includes such transfers on both sides.</div>`;
+}
+function repDemand(D){
+ const cg='<col style="width:8%"><col style="width:6%"><col style="width:28%"><col style="width:8%">';
+ const mk=e=>({d:fmtDMY(e.date),v:e.vno||'',t:e.particulars||''});
+ const side=o=>o?`<td>${rEsc(o.d)}</td><td>${rEsc(o.v)}</td><td>${o.b?'<b>'+rEsc(o.t)+'</b>':rEsc(o.t)}</td>${nc(o.a)}`:'<td></td><td></td><td></td><td></td>';
+ return D.groups.map(g=>g.accs.map(a=>{
+  const L=[{t:D.from?'To Opening Balance (b/f)':'To Opening Balance',a:a.open,b:1}].concat(a.rows.filter(e=>Number(e.received)>0).map(e=>({...mk(e),a:Number(e.received)})));
+  const R=a.rows.filter(e=>Number(e.payment)>0).map(e=>({...mk(e),a:Number(e.payment)})).concat([{t:'By Closing Balance (c/f)',a:a.close,b:1}]);
+  let h='';for(let i=0;i<Math.max(L.length,R.length);i++)h+=`<tr>${side(L[i])}${side(R[i])}</tr>`;
+  return `<div class="rep-fund">${rEsc(g.label)} — ${rEsc(a.label)}</div><table class="rep-tbl fixed"><colgroup>${cg}${cg}</colgroup><thead><tr><th colspan="4">RECEIPT / INCOME SIDE</th><th colspan="4">PAYMENT / EXPENDITURE SIDE</th></tr><tr><th>Date</th><th>V.No</th><th>Particulars</th><th>Amount</th><th>Date</th><th>V.No</th><th>Particulars</th><th>Amount</th></tr></thead><tbody>${h}<tr class="tot"><td colspan="3">Total</td>${nc(a.open+a.rec)}<td colspan="3">Total</td>${nc(a.pay+a.close)}</tr></tbody></table>`;
+ }).join('')).join('')||'<p>No data.</p>';
+}
+function repGenerate(){
+ const out=document.getElementById('rp_out');if(!out)return;
+ const st=document.getElementById('rp_status'),D=repCompute();
+ if(D.err){st.textContent=D.err;return;}
+ repData=D;const type=document.getElementById('rp_type').value;
+ repHTML=repHead(D,type)+(type==='demand'?repDemand(D):repSyn(D))+'<div class="rep-sign"><span>Prepared by (Clerk / Accountant)</span><span>Head of the Institution</span></div>';
+ out.innerHTML=repHTML;st.textContent=D.groups.reduce((n,g)=>n+g.accs.length,0)+' account(s) · live from cloud data';
+}
+function repPrint(){
+ if(!repHTML)return alert('Generate the report first.');
+ document.getElementById('reportPrintRoot').innerHTML=repHTML;
+ const st=document.createElement('style');st.textContent='@media print{@page{size:A4 landscape;margin:8mm}}';document.head.appendChild(st);
+ document.body.classList.add('print-report');
+ const done=()=>{document.body.classList.remove('print-report');st.remove();window.removeEventListener('afterprint',done);};
+ window.addEventListener('afterprint',done);setTimeout(()=>window.print(),60);
+}
+function repExcel(){
+ if(!repData)return alert('Generate the report first.');
+ if(typeof XLSX==='undefined'){const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';s.onload=repExcel;document.head.appendChild(s);return;}
+ const S=[['Fund','Account','Opening Balance','Receipts','Payments','Closing Balance']],E=[['Fund','Account','Date','V.No','Particulars','Receipt','Payment']];
+ repData.groups.forEach(g=>g.accs.forEach(a=>{S.push([g.label,a.label,a.open,a.rec,a.pay,a.close]);
+  E.push([g.label,a.label,'','','Opening Balance',a.open,'']);
+  a.rows.forEach(e=>E.push([g.label,a.label,fmtDMY(e.date),e.vno||'',e.particulars||'',Number(e.received)||0,Number(e.payment)||0]));
+  E.push([g.label,a.label,'','','Closing Balance','',a.close]);}));
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(S),'Synopsis');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(E),'Statement');
+ XLSX.writeFile(wb,'TFHS_Report_'+(repData.to||'upto-date')+'.xlsx');
+}
 </script>
 </body>
 </html>
