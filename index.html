@@ -218,6 +218,7 @@
       <button onclick="addPassbookEntry()">+ Add Entry</button>
       <button class="secondary" onclick="window.print()">🖨 Print</button>
       <button class="secondary" id="chq_importBtn" onclick="importChequeRegister()" title="Adds only cheques from the Cheque Issue Register that are not already in the Pass Book">⬇ Import Cheque Register (new only)</button>
+      <button class="secondary" id="chq_cleanBtn" onclick="cleanChequeImports()" title="Removes imported cheque entries that are outside FY 2025-26/2026-27 or duplicate your manual entries">🧹 Clean import duplicates</button>
       <select id="chq_datemode" title="Date to use for the Pass Book entry"><option value="doi">Date of issue</option><option value="dated">Cheque date</option></select>
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
@@ -795,9 +796,11 @@ function saveEditPass(id){
   }).then(()=>{ pbEditingId = null; });
 }
 
-/* ---------- Import from Cheque Register (new entries only) ---------- */
+/* ---------- Import from Cheque Register (new entries only, FY 2025-26 & 2026-27) ---------- */
 /* Source: https://prabirdangar-web.github.io/payment/  → Firestore doc tfhs/chequeRegisterEntries (field "entries") */
 const CHQ_REG_DOC = 'tfhs/chequeRegisterEntries';
+const CHQ_FY_FROM = '2025-04-01', CHQ_FY_TO = '2027-03-31';   // FY 2025-26 and 2026-27 only
+const CHQ_LOOSE_DAYS = 60;   // same amount, same account, within this many days = already entered (different date / wording)
 /* Bank A/C number (from the register's A/C head) → Pass Book account id. A/Cs not listed here are skipped. */
 const CHQ_ACC_TO_BANK = {
   '5536011000624':'dev_bank',
@@ -807,6 +810,18 @@ const CHQ_ACC_TO_BANK = {
   '32452532658':'ssa_sbi'
 };
 function chqEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function chqDays(a,b){ const f=x=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(x||''); return m?Date.UTC(+m[1],+m[2]-1,+m[3]):NaN;}; return Math.abs(f(a)-f(b))/86400000; }
+function chqSame(x,y){ return Math.abs((Number(x)||0)-(Number(y)||0))<0.005; }
+function chqInFY(d){ return /^\d{4}-\d{2}-\d{2}$/.test(d||'') && d>=CHQ_FY_FROM && d<=CHQ_FY_TO; }
+async function chqLoadPassbooks(){
+  const have = {};
+  for(const b of BANKS){
+    const s = await db.collection('passbook').doc(b.id).collection('entries').get();
+    have[b.id] = { ids:new Set(), rows:[] };
+    s.forEach(d=>{ have[b.id].ids.add(d.id); have[b.id].rows.push({id:d.id, ...d.data()}); });
+  }
+  return have;
+}
 async function importChequeRegister(){
   if(!auth.currentUser){ alert('Please sign in first.'); return; }
   const btn = document.getElementById('chq_importBtn');
@@ -817,70 +832,108 @@ async function importChequeRegister(){
     const snap = await db.doc(CHQ_REG_DOC).get();
     const reg = (snap.exists && Array.isArray(snap.data().entries)) ? snap.data().entries : [];
     if(!reg.length){ alert('No cheques found in the Cheque Issue Register.'); return; }
+    const have = await chqLoadPassbooks();
 
-    // what is already in the Pass Book (all accounts)
-    const have = {};
-    for(const b of BANKS){
-      const s = await db.collection('passbook').doc(b.id).collection('entries').get();
-      have[b.id] = { ids:new Set(), rows:[] };
-      s.forEach(d=>{ have[b.id].ids.add(d.id); have[b.id].rows.push(d.data()); });
-    }
-
-    const fresh = [], already = [], noBank = [], bad = [];
+    const work = [], noBank = [], bad = [], outFY = [];
     reg.slice().sort((a,b)=>(Number(a.sl)||0)-(Number(b.sl)||0)).forEach(e=>{
       const acNo = (String(e.acc||'').match(/\d{6,}/)||[''])[0];
       const bank = CHQ_ACC_TO_BANK[acNo];
       const amt = Math.round((parseFloat(e.amount)||0)*100)/100;
       const chNo = String(e.chNo||'').trim();
-      const date = isoRe.test(mode==='dated'?e.dated:e.doi) ? (mode==='dated'?e.dated:e.doi)
-                 : (isoRe.test(e.doi)?e.doi:(isoRe.test(e.dated)?e.dated:''));
-      if(!bank){ noBank.push(e); return; }
+      const pick = mode==='dated' ? e.dated : e.doi;
+      const date = isoRe.test(pick) ? pick : (isoRe.test(e.doi)?e.doi:(isoRe.test(e.dated)?e.dated:''));
       if(!date || !(amt>0)){ bad.push(e); return; }
-      const docId = 'chq_' + String(e.id||('sl'+e.sl)).replace(/[^\w-]/g,'_');
-      const h = have[bank];
-      const dup = h.ids.has(docId) || h.rows.some(x=> x.chqRegId===e.id ||
-        (chNo && Math.abs((Number(x.payment)||0)-amt)<0.005 && String(x.particulars||'').includes(chNo)));
-      if(dup){ already.push(e); return; }
-      const parts = ['Chq No. '+(chNo||'—')];
+      if(!chqInFY(date)){ outFY.push(e); return; }
+      if(!bank){ noBank.push(e); return; }
+      work.push({ e, bank, amt, chNo, date, docId:'chq_'+String(e.id||('sl'+e.sl)).replace(/[^\w-]/g,'_'), state:null });
+    });
+
+    // Phase 1 — exact: same register ID, or same cheque no. + amount (any date)
+    work.forEach(w=>{
+      const h = have[w.bank];
+      let r = h.rows.find(x=>!x._used && (x.id===w.docId || x.chqRegId===w.e.id));
+      if(!r && w.chNo) r = h.rows.find(x=>!x._used && chqSame(x.payment,w.amt) && String(x.particulars||'').includes(w.chNo));
+      if(r){ r._used = true; w.state = 'exact'; }
+    });
+    // Phase 2 — loose: same amount in same account within ±CHQ_LOOSE_DAYS (entered on a different date / without cheque no.)
+    work.filter(w=>!w.state).forEach(w=>{
+      const c = have[w.bank].rows.filter(x=>!x._used && !x.chqImported && chqSame(x.payment,w.amt) && chqDays(x.date,w.date)<=CHQ_LOOSE_DAYS)
+        .sort((x,y)=>chqDays(x.date,w.date)-chqDays(y.date,w.date))[0];
+      if(c){ c._used = true; w.state = 'loose'; }
+    });
+
+    const fresh = [];
+    work.filter(w=>!w.state).forEach(w=>{
+      const e = w.e, parts = ['Chq No. '+(w.chNo||'—')];
       if(e.dated && isoRe.test(e.dated)) parts[0] += ' dt. ' + fmtDMY(e.dated);
       if(e.to) parts.push(String(e.to).trim());
       if(e.purpose) parts.push(String(e.purpose).trim());
-      fresh.push({ bank, docId, data:{
-        date, particulars: chqEsc(parts.join(' – ')),
-        received:null, payment:amt,
-        chqRegId: e.id||null, chqImported:true,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, e });
+      fresh.push({ bank:w.bank, docId:w.docId, data:{
+        date:w.date, particulars:chqEsc(parts.join(' – ')),
+        received:null, payment:w.amt, chqRegId:e.id||null, chqImported:true,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      }});
     });
+    const nExact = work.filter(w=>w.state==='exact').length, nLoose = work.filter(w=>w.state==='loose').length;
 
-    const lines = [];
-    lines.push('Cheques in register: '+reg.length);
-    lines.push('New to import: '+fresh.length);
-    lines.push('Already in Pass Book (skipped): '+already.length);
+    const lines = ['Only FY 2025-26 & 2026-27 (01-04-2025 to 31-03-2027)','',
+      'Cheques in register: '+reg.length,
+      'Outside these two years (ignored): '+outFY.length,
+      'Already in Pass Book — same cheque no.: '+nExact,
+      'Already in Pass Book — same amount, different date/wording: '+nLoose,
+      'NEW to import: '+fresh.length];
     if(noBank.length) lines.push('No Pass Book account mapped (skipped): '+noBank.length+' ['+[...new Set(noBank.map(x=>String(x.acc||'').trim()))].join(', ')+']');
     if(bad.length) lines.push('Missing date/amount (skipped): '+bad.length);
     if(!fresh.length){ alert(lines.join('\n')+'\n\nNothing new to import.'); return; }
-    const perBank = {};
-    fresh.forEach(f=>{ perBank[f.bank]=(perBank[f.bank]||0)+1; });
-    lines.push('');
-    Object.keys(perBank).forEach(k=>{ const b=BANKS.find(x=>x.id===k); lines.push('  • '+(b?b.label:k)+': '+perBank[k]); });
+    const perBank = {}; fresh.forEach(f=>{ perBank[f.bank]=(perBank[f.bank]||0)+1; });
+    lines.push(''); Object.keys(perBank).forEach(k=>{ const b=BANKS.find(x=>x.id===k); lines.push('  • '+(b?b.label:k)+': '+perBank[k]); });
     if(!confirm(lines.join('\n')+'\n\nImport these as Withdrawals in the Pass Book?')) return;
 
     btn.textContent = 'Importing…';
     for(let i=0;i<fresh.length;i+=400){
       const batch = db.batch();
-      fresh.slice(i,i+400).forEach(f=>{
-        batch.set(db.collection('passbook').doc(f.bank).collection('entries').doc(f.docId), f.data);
-      });
+      fresh.slice(i,i+400).forEach(f=>batch.set(db.collection('passbook').doc(f.bank).collection('entries').doc(f.docId), f.data));
       await batch.commit();
     }
     alert('Imported '+fresh.length+' new cheque entr'+(fresh.length===1?'y':'ies')+' into the Pass Book.');
   }catch(err){
-    console.error(err);
-    alert('Could not import from the Cheque Register: '+err.message);
-  }finally{
-    btn.disabled = false; btn.textContent = oldTxt;
-  }
+    console.error(err); alert('Could not import from the Cheque Register: '+err.message);
+  }finally{ btn.disabled = false; btn.textContent = oldTxt; }
+}
+
+/* Clean up earlier imports: removes ONLY entries created by this import (chqImported) that are
+   (a) outside FY 2025-26/2026-27, or (b) duplicates of an entry you made by hand. Manual entries are never deleted. */
+async function cleanChequeImports(){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  if(!(await verifyDeletePassword())) return;
+  const btn = document.getElementById('chq_cleanBtn'); btn.disabled = true;
+  try{
+    const have = await chqLoadPassbooks();
+    const del = [];   // {bank,id,why,row}
+    for(const b of BANKS){
+      const rows = have[b.id].rows;
+      const manual = rows.filter(r=>!r.chqImported);
+      rows.filter(r=>r.chqImported).sort((x,y)=>String(x.date).localeCompare(String(y.date))).forEach(r=>{
+        if(!chqInFY(r.date)){ del.push({bank:b.id,id:r.id,why:'outside FY',row:r}); return; }
+        const no = (/Chq No\.\s*(\S+)/.exec(String(r.particulars||''))||[])[1];
+        let m = no && no!=='—' ? manual.find(x=>!x._used && chqSame(x.payment,r.payment) && String(x.particulars||'').includes(no)) : null;
+        if(!m) m = manual.filter(x=>!x._used && chqSame(x.payment,r.payment) && chqDays(x.date,r.date)<=CHQ_LOOSE_DAYS)
+                   .sort((x,y)=>chqDays(x.date,r.date)-chqDays(y.date,r.date))[0];
+        if(m){ m._used = true; del.push({bank:b.id,id:r.id,why:'duplicate of manual entry',row:r}); }
+      });
+    }
+    if(!del.length){ alert('Nothing to clean — no excess or duplicate imported entries found.'); return; }
+    const nOut = del.filter(d=>d.why==='outside FY').length, nDup = del.length-nOut;
+    const sample = del.slice(0,12).map(d=>{ const b=BANKS.find(x=>x.id===d.bank); return '  • '+fmtDMY(d.row.date)+'  ₹'+inr(d.row.payment)+'  ['+(b?b.label:d.bank)+']  '+d.why; }).join('\n');
+    if(!confirm('Delete '+del.length+' imported entries?\n  Outside FY 2025-26/2026-27: '+nOut+'\n  Duplicate of your manual entry: '+nDup+'\n\n'+sample+(del.length>12?'\n  …and '+(del.length-12)+' more':'')+'\n\nYour manually entered rows are NOT touched.')) return;
+    for(let i=0;i<del.length;i+=400){
+      const batch = db.batch();
+      del.slice(i,i+400).forEach(d=>batch.delete(db.collection('passbook').doc(d.bank).collection('entries').doc(d.id)));
+      await batch.commit();
+    }
+    alert('Removed '+del.length+' imported entries.');
+  }catch(err){ console.error(err); alert('Cleanup failed: '+err.message); }
+  finally{ btn.disabled = false; }
 }
 
 /* ---------- Voucher Register ---------- */
