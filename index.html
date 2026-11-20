@@ -220,6 +220,7 @@
       <button class="secondary" id="chq_importBtn" onclick="importChequeRegister()" title="Adds only cheques from the Cheque Issue Register that are not already in the Pass Book">⬇ Import Cheque Register (new only)</button>
       <button class="secondary" id="chq_cleanBtn" onclick="cleanChequeImports()" title="Removes imported cheque entries that are outside FY 2025-26/2026-27 or duplicate your manual entries">🧹 Clean import duplicates</button>
       <button class="secondary" id="chq_resetBtn" onclick="resetPassbookAndFetchCheques()" title="Keeps only Deposits + OB in every Pass Book, deletes all other entries (backup downloaded first), then fetches cheques of FY 2025-26 & 2026-27">♻ Keep Deposits+OB, delete rest &amp; fetch cheques</button>
+      <select id="chq_scope" title="Which Pass Book(s) the import / reset / cleanup buttons act on"><option value="one">This Pass Book only</option><option value="all">All Pass Books</option></select>
       <select id="chq_datemode" title="Date to use for the Pass Book entry"><option value="doi">Date of issue</option><option value="dated">Cheque date</option></select>
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
@@ -810,13 +811,15 @@ const CHQ_ACC_TO_BANK = {
   '606113025908':'hostel_fund',
   '32452532658':'ssa_sbi'
 };
+function chqBanks(){ const sc=document.getElementById('chq_scope'); return (sc && sc.value==='all') ? BANKS : BANKS.filter(b=>b.id===currentBank); }
+function chqScopeLabel(){ const sc=document.getElementById('chq_scope'); return (sc && sc.value==='all') ? 'ALL Pass Books' : (BANKS.find(b=>b.id===currentBank)||{}).label; }
 function chqEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function chqDays(a,b){ const f=x=>{const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(x||''); return m?Date.UTC(+m[1],+m[2]-1,+m[3]):NaN;}; return Math.abs(f(a)-f(b))/86400000; }
 function chqSame(x,y){ return Math.abs((Number(x)||0)-(Number(y)||0))<0.005; }
 function chqInFY(d){ return /^\d{4}-\d{2}-\d{2}$/.test(d||'') && d>=CHQ_FY_FROM && d<=CHQ_FY_TO; }
 async function chqLoadPassbooks(){
   const have = {};
-  for(const b of BANKS){
+  for(const b of chqBanks()){
     const s = await db.collection('passbook').doc(b.id).collection('entries').get();
     have[b.id] = { ids:new Set(), rows:[] };
     s.forEach(d=>{ have[b.id].ids.add(d.id); have[b.id].rows.push({id:d.id, ...d.data()}); });
@@ -846,6 +849,7 @@ async function importChequeRegister(){
       if(!date || !(amt>0)){ bad.push(e); return; }
       if(!chqInFY(date)){ outFY.push(e); return; }
       if(!bank){ noBank.push(e); return; }
+      if(!have[bank]) return;   // belongs to a Pass Book outside the chosen scope
       work.push({ e, bank, amt, chNo, date, docId:'chq_'+String(e.id||('sl'+e.sl)).replace(/[^\w-]/g,'_'), state:null });
     });
 
@@ -877,8 +881,8 @@ async function importChequeRegister(){
     });
     const nExact = work.filter(w=>w.state==='exact').length, nLoose = work.filter(w=>w.state==='loose').length;
 
-    const lines = ['Only FY 2025-26 & 2026-27 (01-04-2025 to 31-03-2027)','',
-      'Cheques in register: '+reg.length,
+    const lines = ['Pass Book: '+chqScopeLabel(),'Only FY 2025-26 & 2026-27 (01-04-2025 to 31-03-2027)','',
+      'Cheques in register: '+reg.length+(Object.keys(have).length<BANKS.length?' (only this Pass Book\'s are considered)':''),
       'Outside these two years (ignored): '+outFY.length,
       'Already in Pass Book — same cheque no.: '+nExact,
       'Already in Pass Book — same amount, different date/wording: '+nLoose,
@@ -913,7 +917,7 @@ async function resetPassbookAndFetchCheques(){
     const have = await chqLoadPassbooks();
     const del = [], keepCnt = {}, backup = {};
     let delAmt = 0;
-    BANKS.forEach(b=>{
+    chqBanks().forEach(b=>{
       backup[b.id] = have[b.id].rows.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null}));
       keepCnt[b.id] = 0;
       have[b.id].rows.forEach(r=>{
@@ -922,10 +926,10 @@ async function resetPassbookAndFetchCheques(){
       });
     });
     if(!del.length){
-      alert('Every Pass Book row is already a Deposit or OB — nothing to delete.\nNow fetching cheques…');
+      alert('Every row in '+chqScopeLabel()+' is already a Deposit or OB — nothing to delete.\nNow fetching cheques…');
     } else {
-      const per = BANKS.map(b=>'  • '+b.label+': keep '+keepCnt[b.id]+', delete '+del.filter(d=>d.bank===b.id).length).join('\n');
-      if(!confirm('This will KEEP only Deposits (received) and OB rows in all Pass Books and DELETE every other row.\n\n'+per+
+      const per = chqBanks().map(b=>'  • '+b.label+': keep '+keepCnt[b.id]+', delete '+del.filter(d=>d.bank===b.id).length).join('\n');
+      if(!confirm('Pass Book: '+chqScopeLabel()+'\n\nThis will KEEP only Deposits (received) and OB rows and DELETE every other row.\n\n'+per+
         '\n\nTotal to delete: '+del.length+' rows (withdrawals ₹'+inr(delAmt)+')\nA backup file is downloaded first.\n\nThen cheques of FY 2025-26 & 2026-27 will be fetched.\n\nContinue?')) return;
       const t = new Date(), z=n=>String(n).padStart(2,'0');
       const blob = new Blob([JSON.stringify(backup,null,1)],{type:'application/json'});
@@ -953,7 +957,7 @@ async function cleanChequeImports(){
   try{
     const have = await chqLoadPassbooks();
     const del = [];   // {bank,id,why,row}
-    for(const b of BANKS){
+    for(const b of chqBanks()){
       const rows = have[b.id].rows;
       const manual = rows.filter(r=>!r.chqImported);
       rows.filter(r=>r.chqImported).sort((x,y)=>String(x.date).localeCompare(String(y.date))).forEach(r=>{
