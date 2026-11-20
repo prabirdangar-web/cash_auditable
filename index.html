@@ -217,6 +217,8 @@
       <input type="number" id="pb_payment" placeholder="Withdrawal (₹)" style="width:120px;">
       <button onclick="addPassbookEntry()">+ Add Entry</button>
       <button class="secondary" onclick="window.print()">🖨 Print</button>
+      <button class="secondary" id="chq_importBtn" onclick="importChequeRegister()" title="Adds only cheques from the Cheque Issue Register that are not already in the Pass Book">⬇ Import Cheque Register (new only)</button>
+      <select id="chq_datemode" title="Date to use for the Pass Book entry"><option value="doi">Date of issue</option><option value="dated">Cheque date</option></select>
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
     <div class="toolbar noprint searchBar">
@@ -791,6 +793,94 @@ function saveEditPass(id){
     received: received? Number(received): null,
     payment: payment? Number(payment): null
   }).then(()=>{ pbEditingId = null; });
+}
+
+/* ---------- Import from Cheque Register (new entries only) ---------- */
+/* Source: https://prabirdangar-web.github.io/payment/  → Firestore doc tfhs/chequeRegisterEntries (field "entries") */
+const CHQ_REG_DOC = 'tfhs/chequeRegisterEntries';
+/* Bank A/C number (from the register's A/C head) → Pass Book account id. A/Cs not listed here are skipped. */
+const CHQ_ACC_TO_BANK = {
+  '5536011000624':'dev_bank',
+  '11110260145':'voc_bank',
+  '110000315825':'mdm_bank',
+  '606113025908':'hostel_fund',
+  '32452532658':'ssa_sbi'
+};
+function chqEsc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+async function importChequeRegister(){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  const btn = document.getElementById('chq_importBtn');
+  const mode = document.getElementById('chq_datemode').value;
+  const isoRe = /^\d{4}-\d{2}-\d{2}$/;
+  btn.disabled = true; const oldTxt = btn.textContent; btn.textContent = 'Reading register…';
+  try{
+    const snap = await db.doc(CHQ_REG_DOC).get();
+    const reg = (snap.exists && Array.isArray(snap.data().entries)) ? snap.data().entries : [];
+    if(!reg.length){ alert('No cheques found in the Cheque Issue Register.'); return; }
+
+    // what is already in the Pass Book (all accounts)
+    const have = {};
+    for(const b of BANKS){
+      const s = await db.collection('passbook').doc(b.id).collection('entries').get();
+      have[b.id] = { ids:new Set(), rows:[] };
+      s.forEach(d=>{ have[b.id].ids.add(d.id); have[b.id].rows.push(d.data()); });
+    }
+
+    const fresh = [], already = [], noBank = [], bad = [];
+    reg.slice().sort((a,b)=>(Number(a.sl)||0)-(Number(b.sl)||0)).forEach(e=>{
+      const acNo = (String(e.acc||'').match(/\d{6,}/)||[''])[0];
+      const bank = CHQ_ACC_TO_BANK[acNo];
+      const amt = Math.round((parseFloat(e.amount)||0)*100)/100;
+      const chNo = String(e.chNo||'').trim();
+      const date = isoRe.test(mode==='dated'?e.dated:e.doi) ? (mode==='dated'?e.dated:e.doi)
+                 : (isoRe.test(e.doi)?e.doi:(isoRe.test(e.dated)?e.dated:''));
+      if(!bank){ noBank.push(e); return; }
+      if(!date || !(amt>0)){ bad.push(e); return; }
+      const docId = 'chq_' + String(e.id||('sl'+e.sl)).replace(/[^\w-]/g,'_');
+      const h = have[bank];
+      const dup = h.ids.has(docId) || h.rows.some(x=> x.chqRegId===e.id ||
+        (chNo && Math.abs((Number(x.payment)||0)-amt)<0.005 && String(x.particulars||'').includes(chNo)));
+      if(dup){ already.push(e); return; }
+      const parts = ['Chq No. '+(chNo||'—')];
+      if(e.dated && isoRe.test(e.dated)) parts[0] += ' dt. ' + fmtDMY(e.dated);
+      if(e.to) parts.push(String(e.to).trim());
+      if(e.purpose) parts.push(String(e.purpose).trim());
+      fresh.push({ bank, docId, data:{
+        date, particulars: chqEsc(parts.join(' – ')),
+        received:null, payment:amt,
+        chqRegId: e.id||null, chqImported:true,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, e });
+    });
+
+    const lines = [];
+    lines.push('Cheques in register: '+reg.length);
+    lines.push('New to import: '+fresh.length);
+    lines.push('Already in Pass Book (skipped): '+already.length);
+    if(noBank.length) lines.push('No Pass Book account mapped (skipped): '+noBank.length+' ['+[...new Set(noBank.map(x=>String(x.acc||'').trim()))].join(', ')+']');
+    if(bad.length) lines.push('Missing date/amount (skipped): '+bad.length);
+    if(!fresh.length){ alert(lines.join('\n')+'\n\nNothing new to import.'); return; }
+    const perBank = {};
+    fresh.forEach(f=>{ perBank[f.bank]=(perBank[f.bank]||0)+1; });
+    lines.push('');
+    Object.keys(perBank).forEach(k=>{ const b=BANKS.find(x=>x.id===k); lines.push('  • '+(b?b.label:k)+': '+perBank[k]); });
+    if(!confirm(lines.join('\n')+'\n\nImport these as Withdrawals in the Pass Book?')) return;
+
+    btn.textContent = 'Importing…';
+    for(let i=0;i<fresh.length;i+=400){
+      const batch = db.batch();
+      fresh.slice(i,i+400).forEach(f=>{
+        batch.set(db.collection('passbook').doc(f.bank).collection('entries').doc(f.docId), f.data);
+      });
+      await batch.commit();
+    }
+    alert('Imported '+fresh.length+' new cheque entr'+(fresh.length===1?'y':'ies')+' into the Pass Book.');
+  }catch(err){
+    console.error(err);
+    alert('Could not import from the Cheque Register: '+err.message);
+  }finally{
+    btn.disabled = false; btn.textContent = oldTxt;
+  }
 }
 
 /* ---------- Voucher Register ---------- */
