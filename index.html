@@ -219,6 +219,7 @@
       <button class="secondary" onclick="window.print()">🖨 Print</button>
       <button class="secondary" id="chq_importBtn" onclick="importChequeRegister()" title="Adds only cheques from the Cheque Issue Register that are not already in the Pass Book">⬇ Import Cheque Register (new only)</button>
       <button class="secondary" id="chq_cleanBtn" onclick="cleanChequeImports()" title="Removes imported cheque entries that are outside FY 2025-26/2026-27 or duplicate your manual entries">🧹 Clean import duplicates</button>
+      <button class="secondary" id="chq_resetBtn" onclick="resetPassbookAndFetchCheques()" title="Keeps only Deposits + OB in every Pass Book, deletes all other entries (backup downloaded first), then fetches cheques of FY 2025-26 & 2026-27">♻ Keep Deposits+OB, delete rest &amp; fetch cheques</button>
       <select id="chq_datemode" title="Date to use for the Pass Book entry"><option value="doi">Date of issue</option><option value="dated">Cheque date</option></select>
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
@@ -899,6 +900,48 @@ async function importChequeRegister(){
   }catch(err){
     console.error(err); alert('Could not import from the Cheque Register: '+err.message);
   }finally{ btn.disabled = false; btn.textContent = oldTxt; }
+}
+
+/* Reset: in EVERY Pass Book keep only Deposits (received) + OB rows, delete all other rows,
+   then fetch cheques of FY 2025-26 & 2026-27 from the Cheque Issue Register. A JSON backup is downloaded first. */
+function chqIsOB(r){ return /^\s*(o\.?\s?b\.?|opening\s*balance)(\W|$)/i.test(String(r.particulars||'')); }
+async function resetPassbookAndFetchCheques(){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  if(!(await verifyDeletePassword())) return;
+  const btn = document.getElementById('chq_resetBtn'); btn.disabled = true;
+  try{
+    const have = await chqLoadPassbooks();
+    const del = [], keepCnt = {}, backup = {};
+    let delAmt = 0;
+    BANKS.forEach(b=>{
+      backup[b.id] = have[b.id].rows.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null}));
+      keepCnt[b.id] = 0;
+      have[b.id].rows.forEach(r=>{
+        const keep = chqIsOB(r) || (Number(r.received)||0) > 0;
+        if(keep){ keepCnt[b.id]++; } else { del.push({bank:b.id,id:r.id}); delAmt += Number(r.payment)||0; }
+      });
+    });
+    if(!del.length){
+      alert('Every Pass Book row is already a Deposit or OB — nothing to delete.\nNow fetching cheques…');
+    } else {
+      const per = BANKS.map(b=>'  • '+b.label+': keep '+keepCnt[b.id]+', delete '+del.filter(d=>d.bank===b.id).length).join('\n');
+      if(!confirm('This will KEEP only Deposits (received) and OB rows in all Pass Books and DELETE every other row.\n\n'+per+
+        '\n\nTotal to delete: '+del.length+' rows (withdrawals ₹'+inr(delAmt)+')\nA backup file is downloaded first.\n\nThen cheques of FY 2025-26 & 2026-27 will be fetched.\n\nContinue?')) return;
+      const t = new Date(), z=n=>String(n).padStart(2,'0');
+      const blob = new Blob([JSON.stringify(backup,null,1)],{type:'application/json'});
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'passbook-backup-'+t.getFullYear()+z(t.getMonth()+1)+z(t.getDate())+'-'+z(t.getHours())+z(t.getMinutes())+'.json';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),4000);
+      await new Promise(r=>setTimeout(r,600));
+      for(let i=0;i<del.length;i+=400){
+        const batch = db.batch();
+        del.slice(i,i+400).forEach(d=>batch.delete(db.collection('passbook').doc(d.bank).collection('entries').doc(d.id)));
+        await batch.commit();
+      }
+    }
+  }catch(err){ console.error(err); alert('Reset failed: '+err.message); btn.disabled = false; return; }
+  btn.disabled = false;
+  await importChequeRegister();   // fetch FY 2025-26 & 2026-27 cheques (shows its own preview/confirm)
 }
 
 /* Clean up earlier imports: removes ONLY entries created by this import (chqImported) that are
