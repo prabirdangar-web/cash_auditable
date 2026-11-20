@@ -906,30 +906,43 @@ async function importChequeRegister(){
   }finally{ btn.disabled = false; btn.textContent = oldTxt; }
 }
 
-/* Reset: in EVERY Pass Book keep only Deposits (received) + OB rows, delete all other rows,
-   then fetch cheques of FY 2025-26 & 2026-27 from the Cheque Issue Register. A JSON backup is downloaded first. */
+/* Reset (per Pass Book): keep ONLY Deposits (received) + OB that fall in FY 2025-26 / 2026-27, delete every other row
+   (all withdrawals and everything dated before 01-04-2025), then fetch that account's cheques for the same two years.
+   If an account has no OB row for 2025-26, one is created from the balance carried forward from the older rows.
+   A JSON backup is downloaded first. */
 function chqIsOB(r){ return /^\s*(o\.?\s?b\.?|opening\s*balance)(\W|$)/i.test(String(r.particulars||'')); }
+function chqRowDate(r){ const d=String(r.date||'').trim(); if(/^\d{4}-\d{2}-\d{2}$/.test(d)) return d; const m=/^(\d{4})-(\d{2})$/.exec(d); return m? m[1]+'-04-01' : ''; }
 async function resetPassbookAndFetchCheques(){
   if(!auth.currentUser){ alert('Please sign in first.'); return; }
   if(!(await verifyDeletePassword())) return;
   const btn = document.getElementById('chq_resetBtn'); btn.disabled = true;
   try{
     const have = await chqLoadPassbooks();
-    const del = [], keepCnt = {}, backup = {};
+    const del = [], create = [], info = {}, backup = {};
     let delAmt = 0;
     chqBanks().forEach(b=>{
-      backup[b.id] = have[b.id].rows.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null}));
-      keepCnt[b.id] = 0;
-      have[b.id].rows.forEach(r=>{
-        const keep = chqIsOB(r) || (Number(r.received)||0) > 0;
-        if(keep){ keepCnt[b.id]++; } else { del.push({bank:b.id,id:r.id}); delAmt += Number(r.payment)||0; }
+      const rows = have[b.id].rows;
+      backup[b.id] = rows.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null}));
+      let keep=0, delN=0, oldN=0, carry=0, hasOB=false;
+      rows.forEach(r=>{
+        const rd = chqRowDate(r);
+        if(rd && rd < CHQ_FY_FROM) carry += (Number(r.received)||0) - (Number(r.payment)||0);
+        const ok = rd && rd>=CHQ_FY_FROM && rd<=CHQ_FY_TO && (chqIsOB(r) || (Number(r.received)||0)>0);
+        if(ok){ keep++; if(chqIsOB(r)) hasOB = true; }
+        else { del.push({bank:b.id,id:r.id}); delAmt += Number(r.payment)||0; delN++; if(rd && rd<CHQ_FY_FROM) oldN++; }
       });
+      carry = Math.round(carry*100)/100;
+      let ob;
+      if(hasOB) ob = 'OB kept';
+      else if(Math.abs(carry)>=0.005){ create.push({bank:b.id,carry}); ob = 'OB will be created ₹'+inr(Math.abs(carry))+(carry<0?' (Dr)':''); }
+      else ob = 'no OB (starts from 0)';
+      info[b.id] = {keep,delN,oldN,ob};
     });
-    if(!del.length){
-      alert('Every row in '+chqScopeLabel()+' is already a Deposit or OB — nothing to delete.\nNow fetching cheques…');
+    if(!del.length && !create.length){
+      alert('Nothing to delete in '+chqScopeLabel()+' — only FY 2025-26/2026-27 Deposits and OB are present.\nNow fetching cheques…');
     } else {
-      const per = chqBanks().map(b=>'  • '+b.label+': keep '+keepCnt[b.id]+', delete '+del.filter(d=>d.bank===b.id).length).join('\n');
-      if(!confirm('Pass Book: '+chqScopeLabel()+'\n\nThis will KEEP only Deposits (received) and OB rows and DELETE every other row.\n\n'+per+
+      const per = chqBanks().map(b=>{ const i=info[b.id]; return '  • '+b.label+': keep '+i.keep+', delete '+i.delN+' (before 01-04-2025: '+i.oldN+') — '+i.ob; }).join('\n');
+      if(!confirm('Pass Book: '+chqScopeLabel()+'\n\nKEEP only FY 2025-26 & 2026-27 Deposits (received) + OB.\nDELETE every other row (all withdrawals and all rows before 01-04-2025).\n\n'+per+
         '\n\nTotal to delete: '+del.length+' rows (withdrawals ₹'+inr(delAmt)+')\nA backup file is downloaded first.\n\nThen cheques of FY 2025-26 & 2026-27 will be fetched.\n\nContinue?')) return;
       const t = new Date(), z=n=>String(n).padStart(2,'0');
       const blob = new Blob([JSON.stringify(backup,null,1)],{type:'application/json'});
@@ -941,6 +954,13 @@ async function resetPassbookAndFetchCheques(){
         const batch = db.batch();
         del.slice(i,i+400).forEach(d=>batch.delete(db.collection('passbook').doc(d.bank).collection('entries').doc(d.id)));
         await batch.commit();
+      }
+      for(const c of create){
+        await db.collection('passbook').doc(c.bank).collection('entries').add({
+          date:'2025-26', particulars:'OB (Opening Balance)',
+          received: c.carry>0 ? c.carry : null, payment: c.carry<0 ? -c.carry : null,
+          obAuto:true, createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
       }
     }
   }catch(err){ console.error(err); alert('Reset failed: '+err.message); btn.disabled = false; return; }
