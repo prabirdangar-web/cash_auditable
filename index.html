@@ -172,9 +172,14 @@
       <button class="secondary" onclick="clearCashSearch()">Clear</button>
       <span id="cb_matchInfo" style="font-size:.78rem;color:var(--grey);"></span>
     </div>
+    <div class="toolbar noprint">
+      <button class="danger" id="cb_delSel" onclick="selDelete('cb')">🗑 Delete selected (0)</button>
+      <button class="secondary" onclick="dupSelect('cb')" title="Ticks repeated entries (keeps the first of each) so you can review and delete them together">🧹 Tick duplicates</button>
+      <span style="font-size:.76rem;color:var(--grey);">Tick rows with the checkbox on the left, then delete them all at once.</span>
+    </div>
     <div class="tableWrap">
       <table>
-        <thead><tr><th>Date</th><th>Particulars</th><th>V.No</th><th>Received (₹)</th><th>Payment (₹)</th><th>Balance (₹)</th><th class="noprint">—</th></tr></thead>
+        <thead><tr><th class="noprint"><input type="checkbox" title="Tick all shown rows" onchange="selAll('cb',this.checked)"></th><th>Date</th><th>Particulars</th><th>V.No</th><th>Received (₹)</th><th>Payment (₹)</th><th>Balance (₹)</th><th class="noprint">—</th></tr></thead>
         <tbody id="cb_tbody"></tbody>
       </table>
     </div>
@@ -222,10 +227,20 @@
       <button class="secondary" onclick="chqSync(true)" title="Fetch new cheques from the Cheque Issue Register now (this also happens automatically)">🔄 Sync Cheque Register</button>
       <button class="secondary" onclick="chqSetCutoff()" title="Cheques up to this Sl. No. are treated as already fetched">✂ Fetch cut-off</button>
       <button class="secondary" onclick="document.getElementById('bankFile').click()" title="Load transactions read from the bank Pass Book PDF/JPEG (JSON). Matching cheques get their W/D date.">📄 Load bank Pass Book data</button>
+      <select id="bankMode" title="How to load the bank data"><option value="merge">Add to existing entries</option><option value="replace">REPLACE all entries of this Pass Book</option></select>
       <input type="file" id="bankFile" accept=".json,application/json" style="display:none" onchange="loadBankFile(this)">
+      <button class="danger" onclick="document.getElementById('allBankFile').click()" title="First-time load: wipes the Pass Books found in the file (backup downloaded first) and loads them fresh, all in one go. No row-by-row deleting.">♻ Reset &amp; load ALL Pass Books (first time)</button>
+      <input type="file" id="allBankFile" accept=".json,application/json" style="display:none" onchange="loadAllFirstTime(this)">
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
     <div id="chq_status" class="noprint" style="font-family:Arial,sans-serif;font-size:.76rem;color:var(--grey);margin:-4px 0 8px;"></div>
+    <div class="toolbar noprint">
+      <button class="danger" id="pb_delSel" onclick="selDelete('pb')">🗑 Delete selected (0)</button>
+      <button class="secondary" onclick="dupSelect('pb')" title="Ticks repeated entries (keeps the first of each) so you can review and delete them together">🧹 Tick duplicates</button>
+      <button class="danger" onclick="pbClearAll()" title="Deletes every entry (a backup is downloaded first)">⚠ Clear Pass Book…</button>
+      <select id="pb_clearScope"><option value="one">this Pass Book</option><option value="all">ALL Pass Books</option></select>
+      <span style="font-size:.76rem;color:var(--grey);">Tick rows with the checkbox on the left, then delete them all at once.</span>
+    </div>
     <div class="toolbar noprint searchBar">
       🔎 <input type="text" id="pb_search" placeholder="Search particulars, amount…" style="min-width:240px;" oninput="renderPassbook()">
       <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pb_search_from" title="From date" oninput="renderPassbook()">
@@ -236,7 +251,7 @@
     </div>
     <div class="tableWrap">
       <table>
-        <thead><tr><th>Date</th><th>Particulars</th><th>Deposit (₹)</th><th>Withdrawal (₹)</th><th>Balance (₹)</th><th class="noprint">—</th></tr></thead>
+        <thead><tr><th class="noprint"><input type="checkbox" title="Tick all shown rows" onchange="selAll('pb',this.checked)"></th><th>Date</th><th>Particulars</th><th>Deposit (₹)</th><th>Withdrawal (₹)</th><th>Balance (₹)</th><th class="noprint">—</th></tr></thead>
         <tbody id="pb_tbody"></tbody>
       </table>
     </div>
@@ -535,7 +550,7 @@ function clearCashSearch(){
 }
 function renderCashbook(){
   const tbody = document.getElementById('cb_tbody');
-  tbody.innerHTML = '';
+  tbody.innerHTML = ''; VIS.cb = [];
   const q = (document.getElementById('cb_search').value||'').trim().toLowerCase();
   const from = dmyVal('cb_search_from');
   const to = dmyVal('cb_search_to');
@@ -548,11 +563,11 @@ function renderCashbook(){
       const hay = [e.particulars, e.vno, e.received, e.payment, e.date, fmtDMY(e.date)].join(' ').toLowerCase();
       if(!hay.includes(q)) return;
     }
-    shown++;
+    shown++; VIS.cb.push(e.id);
     const tr = document.createElement('tr');
     if(e.id === cbEditingId){
       const isoDate = (e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date)) ? e.date : '';
-      tr.innerHTML = `<td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="cbe_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
+      tr.innerHTML = `<td class="noprint"></td><td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="cbe_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
         <td><input type="text" id="cbe_particulars" value="${escapeAttr(e.particulars)}" style="width:100%"></td>
         <td><input type="text" id="cbe_vno" value="${escapeAttr(e.vno)}" style="width:70px"></td>
         <td><input type="number" id="cbe_received" value="${e.received!=null?e.received:''}" style="width:90px"></td>
@@ -560,7 +575,7 @@ function renderCashbook(){
         <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="saveEditCash('${e.id}')">💾</button><button onclick="cancelEditCash()">✖</button></td>`;
     } else {
-      tr.innerHTML = `<td>${fmtDMY(e.date)}</td><td>${e.particulars||''}</td><td>${e.vno||''}</td>
+      tr.innerHTML = `<td class="noprint"><input type="checkbox" ${SEL.cb.has(e.id)?'checked':''} onchange="selToggle('cb','${e.id}',this.checked)"></td><td>${fmtDMY(e.date)}</td><td>${e.particulars||''}</td><td>${e.vno||''}</td>
         <td class="num recv">${inr(e.received)}</td><td class="num pay">${inr(e.payment)}</td>
         <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="startEditCash('${e.id}')">✏️</button><button onclick="deleteCashEntry('${e.id}')">🗑</button></td>`;
@@ -571,6 +586,7 @@ function renderCashbook(){
   const info = document.getElementById('cb_matchInfo');
   if(q || from || to) info.textContent = `Showing ${shown} of ${cbEntries.length} entries`;
   else info.textContent = '';
+  selUpdate('cb');
 }
 function addCashEntry(){
   const date = dmyVal('cb_date');
@@ -643,7 +659,7 @@ function clearPassSearch(){
 function pbIsPending(e){ return e.chqPending===true && !/^\d{4}-\d{2}-\d{2}$/.test(e.date||''); }
 function pbEditCells(e, rbHtml){
   const isoDate = (e.date && /^\d{4}-\d{2}-\d{2}$/.test(e.date)) ? e.date : '';
-  return `<td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pbe_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
+  return `<td class="noprint"></td><td><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="pbe_date" value="${fmtDMY(isoDate)}" style="width:110px"></td>
         <td><input type="text" id="pbe_particulars" value="${escapeAttr(e.particulars)}" style="width:100%"></td>
         <td><input type="number" id="pbe_received" value="${e.received!=null?e.received:''}" style="width:90px"></td>
         <td><input type="number" id="pbe_payment" value="${e.payment!=null?e.payment:''}" style="width:90px"></td>
@@ -652,7 +668,7 @@ function pbEditCells(e, rbHtml){
 }
 function renderPassbook(){
   const tbody = document.getElementById('pb_tbody');
-  tbody.innerHTML = '';
+  tbody.innerHTML = ''; VIS.pb = [];
   const q = (document.getElementById('pb_search').value||'').trim().toLowerCase();
   const from = dmyVal('pb_search_from');
   const to = dmyVal('pb_search_to');
@@ -665,12 +681,13 @@ function renderPassbook(){
     if(from && e.date < from) return;
     if(to && e.date > to) return;
     if(!hit(e)) return;
-    shown++;
+    shown++; VIS.pb.push(e.id);
     const tr = document.createElement('tr');
+    if(/\[CHECK\]/i.test(e.particulars||'')){ tr.style.background = '#fff3cd'; tr.title = 'Entered on assumption (unclear in the Pass Book) — verify, then remove [CHECK] from Particulars'; }
     if(e.id === pbEditingId){
       tr.innerHTML = pbEditCells(e, inr(rb));
     } else {
-      tr.innerHTML = `<td>${fmtDMY(e.date)}</td><td>${e.particulars||''}</td>
+      tr.innerHTML = `<td class="noprint"><input type="checkbox" ${SEL.pb.has(e.id)?'checked':''} onchange="selToggle('pb','${e.id}',this.checked)"></td><td>${fmtDMY(e.date)}</td><td>${e.particulars||''}</td>
         <td class="num recv">${inr(e.received)}</td><td class="num pay">${inr(e.payment)}</td>
         <td class="num">${inr(rb)}</td>
         <td class="noprint rowActions"><button onclick="startEditPass('${e.id}')">✏️</button><button onclick="deletePassEntry('${e.id}')">🗑</button></td>`;
@@ -680,15 +697,15 @@ function renderPassbook(){
   const pShow = (from||to) ? [] : pend.filter(hit);
   if(pShow.length){
     const h = document.createElement('tr');
-    h.innerHTML = '<td colspan="6" style="background:#fff3cd;font-weight:bold;">⏳ Cheques issued but not yet debited by the bank (W/D date pending) — not included in the Pass Book balance</td>';
+    h.innerHTML = '<td colspan="7" style="background:#fff3cd;font-weight:bold;">⏳ Cheques issued but not yet debited by the bank (W/D date pending) — not included in the Pass Book balance</td>';
     tbody.appendChild(h);
     pShow.forEach(e=>{
-      shown++;
+      shown++; VIS.pb.push(e.id);
       const tr = document.createElement('tr'); tr.style.background = '#fff8e1';
       const canc = e.chqCancelled===true;
       if(e.id === pbEditingId){ tr.innerHTML = pbEditCells(e, '—'); }
       else {
-        tr.innerHTML = `<td><span class="noprint"><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="W/D date" id="wd_${e.id}" style="width:100px"><button onclick="setWD('${e.id}')" title="Save W/D date" style="cursor:pointer">✔</button></span><span class="printOnly">Pending</span></td>
+        tr.innerHTML = `<td class="noprint"><input type="checkbox" ${SEL.pb.has(e.id)?'checked':''} onchange="selToggle('pb','${e.id}',this.checked)"></td><td><span class="noprint"><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="W/D date" id="wd_${e.id}" style="width:100px"><button onclick="setWD('${e.id}')" title="Save W/D date" style="cursor:pointer">✔</button></span><span class="printOnly">Pending</span></td>
           <td style="${canc?'text-decoration:line-through;color:var(--grey)':''}">${e.particulars||''}${canc?' <b style="color:var(--red);text-decoration:none">[CANCELLED in register]</b>':''}</td>
           <td class="num"></td><td class="num pay">${inr(e.payment)}</td>
           <td class="num" style="color:var(--grey)">${canc?'—':'pending'}</td>
@@ -701,6 +718,7 @@ function renderPassbook(){
   const info = document.getElementById('pb_matchInfo');
   if(q || from || to) info.textContent = `Showing ${shown} of ${pbEntries.length} entries`;
   else info.textContent = '';
+  selUpdate('pb');
 }
 function addPassbookEntry(){
   const date = dmyVal('pb_date');
@@ -834,7 +852,14 @@ async function chqSync(manual){
     const docId = e=>'chq_'+String(e.id!=null ? e.id : ('sl'+e.sl)).replace(/[^\w-]/g,'_');
     const findRow = (e,bank)=>{
       const n = chNoOf(e), a = amtOf(e);
-      return (ALLD.pb[bank]||[]).find(r=> r.id===docId(e) || (e.id!=null && r.chqRegId===e.id) || (n && chqSame(r.payment,a) && String(r.particulars||'').includes(n)));
+      return (ALLD.pb[bank]||[]).find(r=> r.id===docId(e) || (e.id!=null && r.chqRegId===e.id) || (n && chqSame(r.payment,a) && (String(r.particulars||'').includes(n) || String(r.chqNo||'').trim()===n)));
+    };
+    // bank rows loaded without a cheque no. (e.g. DEV): match a register cheque to such a row by amount, each row used once
+    const claimed = new Set();
+    const findLoaded = (e,bank)=>{
+      const a = amtOf(e), doi = chqDateOK(e.doi) ? e.doi : (chqDateOK(e.dated) ? e.dated : '');
+      const r = (ALLD.pb[bank]||[]).find(r=> r.bankLoaded===true && !r.chqNo && r.chqPending!==true && !claimed.has(r.id) && chqDateOK(r.date) && chqSame(r.payment,a) && (!doi || r.date>=doi));
+      if(r){ claimed.add(r.id); return r; } return null;
     };
     // cut-off: remembered Sl. No.; first time = highest Sl. already present in the Pass Books
     let mark;
@@ -850,14 +875,16 @@ async function chqSync(manual){
         const r = findRow(e,bank);
         if(r && r.chqImported && r.chqPending===true && !chqDateOK(r.date) && (r.chqCancelled===true)!==cancelled) flags.push({bank, id:r.id, cancelled});
       }
-      if(sl <= mark) return;
-      maxSl = Math.max(maxSl, sl);
+      const bf = !!(bank && (meta.fromByBank||{})[bank] && !(meta.backfilled||{})[bank]);   // Pass Book just loaded from the bank: bring in its not-yet-debited cheques
+      if(sl <= mark && !bf) return;
+      if(sl > mark) maxSl = Math.max(maxSl, sl);
       const doi = chqDateOK(e.doi) ? e.doi : (chqDateOK(e.dated) ? e.dated : '');
-      if(!doi || doi < CHQ_FROM) return;
+      const fl = (meta.fromByBank||{})[bank], floor = (fl && fl>CHQ_FROM) ? fl : CHQ_FROM;
+      if(!doi || doi < floor) return;
       if(cancelled){ skipCan++; return; }
       if(!(amtOf(e)>0)) return;
       if(!bank){ noBank.add(String(e.acc||'').trim()); return; }
-      if(findRow(e,bank)) return;
+      if(findRow(e,bank) || findLoaded(e,bank)) return;
       const n = chNoOf(e);
       const parts = ['Chq No. '+(n||'—')+(chqDateOK(e.dated)?' dt. '+fmtDMY(e.dated):'')];
       if(e.to) parts.push(String(e.to).trim());
@@ -883,11 +910,13 @@ async function chqSync(manual){
     fresh.forEach(f=>ops.push(b=>b.set(db.collection('passbook').doc(f.bank).collection('entries').doc(f.id), f.data)));
     flags.forEach(f=>ops.push(b=>b.update(db.collection('passbook').doc(f.bank).collection('entries').doc(f.id), {chqCancelled:f.cancelled})));
     for(let i=0;i<ops.length;i+=400){ const batch = db.batch(); ops.slice(i,i+400).forEach(o=>o(batch)); await batch.commit(); }
-    if(maxSl > mark || typeof meta.lastSl!=='number'){
+    const bfBanks = Object.keys(meta.fromByBank||{}).filter(b=>(meta.fromByBank||{})[b] && !(meta.backfilled||{})[b]);
+    if(maxSl > mark || typeof meta.lastSl!=='number' || bfBanks.length){
       const last = reg.find(e=>(Number(e.sl)||0)===maxSl) || {};
       const lastDoi = chqDateOK(last.doi) ? last.doi : (meta.lastDoi||null);
-      await db.doc(CHQ_META_DOC).set({lastSl:maxSl, lastDoi, updatedAt:firebase.firestore.FieldValue.serverTimestamp(), updatedBy:auth.currentUser.email||''},{merge:true});
-      chqMeta = {...meta, lastSl:maxSl, lastDoi};
+      const bfObj = {}; bfBanks.forEach(b=>{ bfObj[b] = true; });
+      await db.doc(CHQ_META_DOC).set({lastSl:maxSl, lastDoi, backfilled:bfObj, updatedAt:firebase.firestore.FieldValue.serverTimestamp(), updatedBy:auth.currentUser.email||''},{merge:true});
+      chqMeta = {...meta, lastSl:maxSl, lastDoi, backfilled:{...(meta.backfilled||{}), ...bfObj}};
     }
     const note = (fresh.length?fresh.length+' new pending cheque(s) added':'no new cheques') + (flags.length?' · '+flags.length+' flagged cancelled':'');
     chqShowStatus(note);
@@ -920,7 +949,10 @@ async function loadBankFile(input){
   catch(err){ alert('Could not read the file: '+err.message); return; }
   if(!arr || !arr.length){ alert('The file must be a JSON array of entries.'); return; }
   const bank = currentBank, label = (BANKS.find(b=>b.id===bank)||{}).label;
-  const rows = ALLD.pb[bank] || [];
+  const replace = document.getElementById('bankMode').value === 'replace';
+  if(replace && !(await verifyDeletePassword())) return;
+  const oldRows = ALLD.pb[bank] || [];
+  const rows = replace ? [] : oldRows;
   const isPend = r=>r.chqPending===true && !chqDateOK(r.date);
   const pend = rows.filter(r=>isPend(r) && r.chqCancelled!==true);
   const seen = rows.filter(r=>!isPend(r)).map(r=>({d:r.date||'', rc:Number(r.received)||0, py:Number(r.payment)||0}));
@@ -940,17 +972,96 @@ async function loadBankFile(input){
     seen.push({d:date,rc,py}); nNew++;
     ops.push(b=>b.set(db.collection('passbook').doc(bank).collection('entries').doc(), {
       date, particulars:chqEsc(String(r.particulars||'').trim()||'Bank entry'),
-      received: rc>0?rc:null, payment: py>0?py:null, bankLoaded:true,
+      received: rc>0?rc:null, payment: py>0?py:null, bankLoaded:true, chqNo:(String(r.chqNo||'').trim()||null),
       createdAt:firebase.firestore.FieldValue.serverTimestamp()
     }));
   });
   if(!ops.length){ alert('Nothing to load.\nDuplicates skipped: '+nDup+(bad.length?'\nRows without valid date/amount: '+bad.length:'')); return; }
-  if(!confirm('Pass Book: '+label+'\nRows in file: '+arr.length+'\n\nMatched to pending cheques (W/D date set): '+nMatch+'\nNew entries to add: '+nNew+'\nDuplicates skipped: '+nDup
+  if(!confirm((replace?'⚠ REPLACE MODE: all '+oldRows.length+' existing entries of this Pass Book will be DELETED (a backup file is downloaded first).\n\n':'')+'Pass Book: '+label+'\nRows in file: '+arr.length+'\n\nMatched to pending cheques (W/D date set): '+nMatch+'\nNew entries to add: '+nNew+'\nDuplicates skipped: '+nDup
     +(nAmb?'\nAmbiguous withdrawals (same amount, several pending cheques, no cheque no.) added as new: '+nAmb:'')+(bad.length?'\nRows skipped (no valid date/amount): '+bad.length:'')+'\n\nContinue?')) return;
   try{
+    if(replace){
+      chqBusy = true;   // hold the cheque auto-fetch until the new data is in
+      const t = new Date(), z=n=>String(n).padStart(2,'0');
+      const bk = oldRows.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null}));
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(bk,null,1)],{type:'application/json'}));
+      a.download = 'passbook-'+bank+'-backup-'+t.getFullYear()+z(t.getMonth()+1)+z(t.getDate())+'-'+z(t.getHours())+z(t.getMinutes())+'.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      await new Promise(r=>setTimeout(r,600));
+      for(let i=0;i<oldRows.length;i+=400){ const b = db.batch(); oldRows.slice(i,i+400).forEach(r=>b.delete(db.collection('passbook').doc(bank).collection('entries').doc(r.id))); await b.commit(); }
+    }
     for(let i=0;i<ops.length;i+=400){ const batch = db.batch(); ops.slice(i,i+400).forEach(o=>o(batch)); await batch.commit(); }
-    alert('Done. W/D dates set: '+nMatch+' · new entries added: '+nNew);
-  }catch(err){ console.error(err); alert('Load failed: '+err.message); }
+    {
+      // cheques issued from this Pass Book's first date that are NOT in the bank data are fetched from the Cheque Register as pending
+      const m0 = await chqGetMeta();
+      const mind = arr.map(r=>chqParseDate(r.date)).filter(chqDateOK).sort()[0];
+      if(mind){
+        const prev = (m0.fromByBank||{})[bank];
+        const from = (replace || !prev || mind<prev) ? mind : prev;
+        await db.doc(CHQ_META_DOC).set({fromByBank:{[bank]:from}, backfilled:{[bank]:false}},{merge:true});
+        chqMeta = {...m0, fromByBank:{...(m0.fromByBank||{}),[bank]:from}, backfilled:{...(m0.backfilled||{}),[bank]:false}};
+      }
+      chqBusy = false; chqSchedule();
+    }
+    alert('Done. W/D dates set: '+nMatch+' · new entries added: '+nNew+(replace?'\nOld entries removed: '+oldRows.length+'\nCheques issued later and not found in the bank data will now appear as PENDING.':''));
+  }catch(err){ chqBusy = false; console.error(err); alert('Load failed: '+err.message); }
+}
+
+/* ---------- First-time load of ALL Pass Books from one JSON: {"mdm_bank":[...],"ssa_sbi":[...],"dev_bank":[...],"voc_bank":[...]} ----------
+   Wipes only the Pass Books named in the file (backup downloaded first), loads their rows fresh (exact repeats inside the file are dropped),
+   marks "[CHECK]" rows (read on assumption from an unclear scan) in yellow, then lets the Cheque Register fetch the cheques not yet debited as PENDING. */
+async function loadAllFirstTime(input){
+  const file = input.files[0]; input.value = '';
+  if(!file) return;
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  let obj;
+  try{ obj = JSON.parse(await file.text()); }catch(err){ alert('Could not read the file: '+err.message); return; }
+  const ids = BANKS.map(b=>b.id);
+  const keys = Object.keys(obj||{}).filter(k=>ids.includes(k) && Array.isArray(obj[k]));
+  if(!keys.length){ alert('No Pass Book found in the file.\nExpected keys: '+ids.join(', ')); return; }
+  if(!chqRegLoaded || !ids.every(i=>ALLD.pb[i])){ alert('Data is still loading — try again in a moment.'); return; }
+  const plan = keys.map(k=>{
+    const seen = new Set(), rows = []; let bad = 0, dup = 0, chk = 0;
+    obj[k].forEach(r=>{
+      const date = chqParseDate(r.date), rc = Number(r.received)||0, py = Number(r.payment)||0;
+      if(!date || !(rc>0||py>0)){ bad++; return; }
+      const p = String(r.particulars||'').trim() || 'Bank entry', cn = String(r.chqNo||'').trim();
+      const key = [date,p.toLowerCase(),rc,py,cn].join('|');
+      if(seen.has(key)){ dup++; return; } seen.add(key);
+      if(/\[CHECK\]/i.test(p)) chk++;
+      rows.push({date, particulars:chqEsc(p), received: rc>0?rc:null, payment: py>0?py:null, bankLoaded:true, chqNo:cn||null});
+    });
+    return {bank:k, label:(BANKS.find(b=>b.id===k)||{}).label||k, rows, bad, dup, chk, old:(ALLD.pb[k]||[])};
+  });
+  if(!(await verifyDeletePassword())) return;
+  const tot = plan.reduce((n,x)=>n+x.old.length,0);
+  if(!confirm('FIRST-TIME LOAD — these Pass Books will be wiped and re-loaded:\n\n'+plan.map(x=>'  • '+x.label+': delete '+x.old.length+' old rows → load '+x.rows.length+' rows ('+x.chk+' on assumption [CHECK]'+(x.dup?', '+x.dup+' repeats dropped':'')+(x.bad?', '+x.bad+' invalid skipped':'')+')').join('\n')
+    +'\n\nOther Pass Books are NOT touched. A backup of the '+tot+' old rows is downloaded first.\n\nContinue?')) return;
+  if(prompt('Type RESET (capital letters) to confirm:')!=='RESET') return;
+  chqBusy = true;
+  try{
+    const m0 = await chqGetMeta();
+    const t = new Date(), z=n=>String(n).padStart(2,'0');
+    const bk = {}; plan.forEach(x=>{ bk[x.bank] = x.old.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null})); });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(bk,null,1)],{type:'application/json'}));
+    a.download = 'passbook-before-reset-backup-'+t.getFullYear()+z(t.getMonth()+1)+z(t.getDate())+'-'+z(t.getHours())+z(t.getMinutes())+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    await new Promise(r=>setTimeout(r,600));
+    for(const x of plan){
+      const col = db.collection('passbook').doc(x.bank).collection('entries');
+      for(let i=0;i<x.old.length;i+=400){ const b = db.batch(); x.old.slice(i,i+400).forEach(r=>b.delete(col.doc(r.id))); await b.commit(); }
+      for(let i=0;i<x.rows.length;i+=400){ const b = db.batch(); x.rows.slice(i,i+400).forEach(r=>b.set(col.doc(), {...r, createdAt:firebase.firestore.FieldValue.serverTimestamp()})); await b.commit(); }
+    }
+    // old register cheques must not flood back: cut-off = everything in the register today; cheques issued from each book's first date and not found in its rows come back as PENDING
+    const mx = chqReg.reduce((m,e)=>Math.max(m,Number(e.sl)||0),0);
+    const fromBy = {...(m0.fromByBank||{})}, bfBy = {...(m0.backfilled||{})};
+    plan.forEach(x=>{ const mind = x.rows.map(r=>r.date).filter(chqDateOK).sort()[0]; if(mind){ fromBy[x.bank] = mind; bfBy[x.bank] = false; } else { delete fromBy[x.bank]; delete bfBy[x.bank]; } });
+    await db.doc(CHQ_META_DOC).set({lastSl:mx, fromByBank:fromBy, backfilled:bfBy},{merge:true});
+    chqMeta = {...m0, lastSl:mx, fromByBank:fromBy, backfilled:bfBy};
+    SEL.pb.clear();
+    alert('Done.\n\n'+plan.map(x=>x.label+': '+x.rows.length+' rows loaded').join('\n')+'\n\nYellow rows = entered on assumption ([CHECK]); correct them later and delete the word [CHECK].\nCheques issued but not yet debited will now be fetched from the Cheque Register as PENDING.');
+  }catch(err){ console.error(err); alert('Reset failed: '+err.message); }
+  finally{ chqBusy = false; chqSchedule(); }
 }
 
 /* ---------- Backup ---------- */
@@ -967,6 +1078,84 @@ async function exportAll(){
   a.click();
 }
 
+
+/* ---------- Bulk tools: tick rows → delete together · find duplicates · clear a whole Pass Book ---------- */
+const SEL = {cb:new Set(), pb:new Set()}, VIS = {cb:[], pb:[]};
+function selEntries(k){ return k==='cb' ? cbEntries : pbEntries; }
+function selColl(k){ return k==='cb' ? db.collection('cashbook').doc(currentFund).collection('entries') : db.collection('passbook').doc(currentBank).collection('entries'); }
+function selUpdate(k){
+  const ids = new Set(selEntries(k).map(e=>e.id));
+  [...SEL[k]].forEach(i=>{ if(!ids.has(i)) SEL[k].delete(i); });
+  const b = document.getElementById(k+'_delSel'); if(b) b.textContent = '🗑 Delete selected ('+SEL[k].size+')';
+}
+function selToggle(k,id,on){ if(on) SEL[k].add(id); else SEL[k].delete(id); selUpdate(k); }
+function selAll(k,on){ VIS[k].forEach(id=>{ if(on) SEL[k].add(id); else SEL[k].delete(id); }); if(k==='cb') renderCashbook(); else renderPassbook(); }
+async function selDelete(k){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  const ids = [...SEL[k]];
+  if(!ids.length){ alert('Tick the entries to delete first (checkbox at the left of each row).'); return; }
+  if(!(await verifyDeletePassword())) return;
+  if(!confirm('Delete '+ids.length+' selected entr'+(ids.length===1?'y':'ies')+' permanently?')) return;
+  try{
+    const ref = selColl(k);
+    for(let i=0;i<ids.length;i+=400){ const b = db.batch(); ids.slice(i,i+400).forEach(id=>b.delete(ref.doc(id))); await b.commit(); }
+    SEL[k].clear();
+  }catch(err){ alert('Could not delete: '+err.message); }
+}
+function dupSelect(k){
+  const n = s=>String(s==null?'':s).replace(/\s+/g,' ').trim().toLowerCase();
+  const a = x=>(Number(x)||0).toFixed(2);
+  const rows = selEntries(k), seen = new Set(), dup = [];
+  rows.forEach(e=>{
+    const key = k==='cb' ? [e.date||'',n(e.particulars),n(e.vno),a(e.received),a(e.payment)].join('|')
+                         : [e.date||'',n(e.particulars),a(e.received),a(e.payment)].join('|');
+    if(seen.has(key)) dup.push(e.id); else seen.add(key);
+  });
+  if(k==='pb'){   // pending cheque that is already in the Pass Book as a dated (bank) entry
+    const isP = e=>e.chqPending===true && !/^\d{4}-\d{2}-\d{2}$/.test(e.date||'');
+    rows.filter(isP).forEach(p=>{
+      const no = String(p.chqNo||'').trim(); if(!no || dup.includes(p.id)) return;
+      if(rows.some(r=>r.id!==p.id && !isP(r) && Math.abs((Number(r.payment)||0)-(Number(p.payment)||0))<0.005 && (String(r.chqNo||'').trim()===no || String(r.particulars||'').includes(no)))) dup.push(p.id);
+    });
+  }
+  SEL[k].clear(); dup.forEach(id=>SEL[k].add(id));
+  if(k==='cb') renderCashbook(); else renderPassbook();
+  alert(dup.length ? dup.length+' repeated entr'+(dup.length===1?'y is':'ies are')+' now ticked (the first of each is kept).\n\nCheck them, untick any that are genuine, then press "Delete selected".' : 'No repeated entries found.');
+}
+async function pbClearAll(){
+  if(!auth.currentUser){ alert('Please sign in first.'); return; }
+  const all = document.getElementById('pb_clearScope').value==='all';
+  const banks = all ? BANKS : BANKS.filter(b=>b.id===currentBank);
+  const cnt = banks.map(b=>({b, rows:(ALLD.pb[b.id]||[])}));
+  const total = cnt.reduce((n,c)=>n+c.rows.length,0);
+  if(!total){ alert('Nothing to delete — already empty.'); return; }
+  if(!(await verifyDeletePassword())) return;
+  if(!confirm('DELETE EVERY ENTRY of:\n'+cnt.map(c=>'  • '+c.b.label+': '+c.rows.length).join('\n')+'\n\nTotal '+total+' rows. A backup file is downloaded first.\n\nContinue?')) return;
+  if(prompt('Type DELETE (capital letters) to confirm:')!=='DELETE') return;
+  chqBusy = true;
+  try{
+    const m0 = await chqGetMeta();
+    const t = new Date(), z=n=>String(n).padStart(2,'0');
+    const bk = {}; cnt.forEach(c=>{ bk[c.b.id] = c.rows.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null})); });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(bk,null,1)],{type:'application/json'}));
+    a.download = 'passbook-cleared-backup-'+t.getFullYear()+z(t.getMonth()+1)+z(t.getDate())+'-'+z(t.getHours())+z(t.getMinutes())+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    await new Promise(r=>setTimeout(r,600));
+    for(const c of cnt){
+      for(let i=0;i<c.rows.length;i+=400){ const b = db.batch(); c.rows.slice(i,i+400).forEach(r=>b.delete(db.collection('passbook').doc(c.b.id).collection('entries').doc(r.id))); await b.commit(); }
+    }
+    // old cheques must not come back by themselves: cut-off = everything in the register today
+    const mx = chqReg.reduce((m,e)=>Math.max(m,Number(e.sl)||0),0);
+    const fv = firebase.firestore.FieldValue.delete(), upd = {lastSl:mx, fromByBank:{}, backfilled:{}};
+    cnt.forEach(c=>{ upd.fromByBank[c.b.id] = fv; upd.backfilled[c.b.id] = fv; });
+    await db.doc(CHQ_META_DOC).set(upd,{merge:true});
+    const fb = {...(m0.fromByBank||{})}, bf = {...(m0.backfilled||{})}; cnt.forEach(c=>{ delete fb[c.b.id]; delete bf[c.b.id]; });
+    chqMeta = {...m0, lastSl:mx, fromByBank:fb, backfilled:bf};
+    SEL.pb.clear();
+    alert('Cleared '+total+' entries. Now load the bank data (📄) for each Pass Book — cheques not yet debited will be fetched from the Cheque Register automatically.');
+  }catch(err){ console.error(err); alert('Clear failed: '+err.message); }
+  finally{ chqBusy = false; }
+}
 
 /* ---------- Voucher Register ---------- */
 function watchVouchers(){
