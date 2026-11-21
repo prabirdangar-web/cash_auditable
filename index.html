@@ -224,13 +224,11 @@
       <input type="number" id="pb_payment" placeholder="Withdrawal (₹)" style="width:120px;">
       <button onclick="addPassbookEntry()">+ Add Entry</button>
       <button class="secondary" onclick="window.print()">🖨 Print</button>
-      <button class="secondary" onclick="chqSync(true)" title="Fetch new cheques from the Cheque Issue Register now (this also happens automatically)">🔄 Sync Cheque Register</button>
-      <button class="secondary" onclick="chqSetCutoff()" title="Cheques up to this Sl. No. are treated as already fetched">✂ Fetch cut-off</button>
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="chq_date" title="Cheque issue date to check (default today)" style="width:110px">
+      <button class="secondary" onclick="chqSync(true)" title="Check the Cheque Issue Register for cheques issued on this date and import them one by one">🔔 Check new cheques</button>
       <button class="secondary" onclick="document.getElementById('bankFile').click()" title="Load transactions read from the bank Pass Book PDF/JPEG (JSON). Matching cheques get their W/D date.">📄 Load bank Pass Book data</button>
       <select id="bankMode" title="How to load the bank data"><option value="merge">Add to existing entries</option><option value="replace">REPLACE all entries of this Pass Book</option></select>
       <input type="file" id="bankFile" accept=".json,application/json" style="display:none" onchange="loadBankFile(this)">
-      <button class="danger" onclick="document.getElementById('allBankFile').click()" title="First-time load: wipes the Pass Books found in the file (backup downloaded first) and loads them fresh, all in one go. No row-by-row deleting.">♻ Reset &amp; load ALL Pass Books (first time)</button>
-      <input type="file" id="allBankFile" accept=".json,application/json" style="display:none" onchange="loadAllFirstTime(this)">
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
     <div id="chq_status" class="noprint" style="font-family:Arial,sans-serif;font-size:.76rem;color:var(--grey);margin:-4px 0 8px;"></div>
@@ -386,6 +384,7 @@ auth.onAuthStateChanged(user=>{
     watchVouchers();
     repWatchAll();
     chqWatch(); chqShowStatus('');
+    (function(){ const d=new Date(), z=n=>String(n).padStart(2,'0'); const el=document.getElementById('chq_date'); if(el) el.value=z(d.getDate())+'-'+z(d.getMonth()+1)+'-'+d.getFullYear(); })();
   } else {
     chqUnwatch();
     document.getElementById('loginScreen').style.display='block';
@@ -812,8 +811,8 @@ function chqWatch(){
     chqRegLoaded = true; chqSchedule();
   }, err=>console.error('Cheque register watch error:', err));
 }
-function chqUnwatch(){ if(chqUnsub){ chqUnsub(); chqUnsub=null; } chqRegLoaded=false; }
-function chqSchedule(){ clearTimeout(chqTimer); chqTimer = setTimeout(()=>chqSync(false), 1200); }
+function chqUnwatch(){ if(chqUnsub){ chqUnsub(); chqUnsub=null; } chqRegLoaded=false; chqAutoDone=false; }
+function chqSchedule(){ if(chqAutoDone) return; clearTimeout(chqTimer); chqTimer = setTimeout(()=>{ if(!chqAutoDone && chqRegLoaded && BANKS.every(b=>ALLD.pb[b.id])) chqSync(false); }, 1500); }
 async function chqGetMeta(){
   if(chqMeta) return chqMeta;
   const s = await db.doc(CHQ_META_DOC).get();
@@ -822,111 +821,108 @@ async function chqGetMeta(){
 }
 function chqShowStatus(note){
   const el = document.getElementById('chq_status'); if(!el) return;
-  const m = chqMeta || {}, t = new Date(), z=n=>String(n).padStart(2,'0');
-  el.textContent = 'Cheque Register auto-fetch: ' + (typeof m.lastSl==='number' ? 'fetched up to Sl. '+m.lastSl+(m.lastDoi?' (issued '+fmtDMY(m.lastDoi)+')':'') : 'not started')
-    + ' · checked '+z(t.getHours())+':'+z(t.getMinutes()) + (note?' · '+note:'');
+  const t = new Date(), z=n=>String(n).padStart(2,'0');
+  el.textContent = 'Cheque Register check · '+z(t.getHours())+':'+z(t.getMinutes())+(note?' · '+note:'');
 }
-async function chqSetCutoff(){
-  if(!auth.currentUser){ alert('Please sign in first.'); return; }
-  const m = await chqGetMeta();
-  const v = prompt('Cheque Register entries up to this Sl. No. are treated as ALREADY fetched and are never fetched again.\nEnter Sl. No. (current: '+(typeof m.lastSl==='number'?m.lastSl:'not set')+'):');
-  if(v===null) return;
-  const n = Number(v);
-  if(!isFinite(n) || n<0){ alert('Enter a valid number.'); return; }
-  await db.doc(CHQ_META_DOC).set({lastSl:n, updatedAt:firebase.firestore.FieldValue.serverTimestamp(), updatedBy:auth.currentUser.email||''},{merge:true});
-  chqMeta = {...(chqMeta||{}), lastSl:n};
-  chqSync(true);
-}
+let chqAutoDone = false;
 async function chqSync(manual){
   if(!auth.currentUser) return;
   if(!chqRegLoaded || !BANKS.every(b=>ALLD.pb[b.id])){ if(manual) alert('Data is still loading — try again in a moment.'); return; }
   if(chqBusy) return;
+  const inp = document.getElementById('chq_date');
+  let day = '';
+  if(manual){
+    day = dmyToISO(inp ? inp.value : '');
+    if(!day){ alert('Enter the cheque issue date as DD-MM-YYYY.'); return; }
+  } else {
+    const t = new Date(), z=n=>String(n).padStart(2,'0');
+    day = t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate());
+    chqAutoDone = true;
+  }
   chqBusy = true;
-  if(manual) chqDeclined = false;
   try{
-    const meta = await chqGetMeta();
     const reg = chqReg.slice().sort((a,b)=>(Number(a.sl)||0)-(Number(b.sl)||0));
     const bankOf = e=>CHQ_ACC_TO_BANK[(String(e.acc||'').match(/\d{6,}/)||[''])[0]] || null;
     const chNoOf = e=>String(e.chNo||'').trim();
     const amtOf = e=>Math.round((parseFloat(e.amount)||0)*100)/100;
     const docId = e=>'chq_'+String(e.id!=null ? e.id : ('sl'+e.sl)).replace(/[^\w-]/g,'_');
+    const doiOf = e=>chqDateOK(e.doi) ? e.doi : (chqDateOK(e.dated) ? e.dated : '');
     const findRow = (e,bank)=>{
       const n = chNoOf(e), a = amtOf(e);
       return (ALLD.pb[bank]||[]).find(r=> r.id===docId(e) || (e.id!=null && r.chqRegId===e.id) || (n && chqSame(r.payment,a) && (String(r.particulars||'').includes(n) || String(r.chqNo||'').trim()===n)));
     };
-    // bank rows loaded without a cheque no. (e.g. DEV): match a register cheque to such a row by amount, each row used once
     const claimed = new Set();
     const findLoaded = (e,bank)=>{
-      const a = amtOf(e), doi = chqDateOK(e.doi) ? e.doi : (chqDateOK(e.dated) ? e.dated : '');
+      const a = amtOf(e), doi = doiOf(e);
       const r = (ALLD.pb[bank]||[]).find(r=> r.bankLoaded===true && !r.chqNo && r.chqPending!==true && !claimed.has(r.id) && chqDateOK(r.date) && chqSame(r.payment,a) && (!doi || r.date>=doi));
       if(r){ claimed.add(r.id); return r; } return null;
     };
-    // cut-off: remembered Sl. No.; first time = highest Sl. already present in the Pass Books
-    let mark;
-    if(typeof meta.lastSl==='number') mark = meta.lastSl;
-    else { mark = 0; reg.forEach(e=>{ const b=bankOf(e); if(b && findRow(e,b)) mark = Math.max(mark, Number(e.sl)||0); }); }
-
-    const fresh = [], flags = [], noBank = new Set();
-    let maxSl = mark, skipCan = 0;
+    // flag already-imported pending cheques that were cancelled / deleted in the register (no new entries created)
     const regIds = new Set(reg.map(e=>e.id).filter(x=>x!=null));
+    const flags = [];
     reg.forEach(e=>{
-      const sl = Number(e.sl)||0, bank = bankOf(e), cancelled = chqIsCancelled(e);
-      if(bank){   // a still-pending imported cheque that is (no longer) cancelled in the register
-        const r = findRow(e,bank);
-        if(r && r.chqImported && r.chqPending===true && !chqDateOK(r.date) && (r.chqCancelled===true)!==cancelled) flags.push({bank, id:r.id, cancelled});
-      }
-      const bf = !!(bank && (meta.fromByBank||{})[bank] && !(meta.backfilled||{})[bank]);   // Pass Book just loaded from the bank: bring in its not-yet-debited cheques
-      if(sl <= mark && !bf) return;
-      if(sl > mark) maxSl = Math.max(maxSl, sl);
-      const doi = chqDateOK(e.doi) ? e.doi : (chqDateOK(e.dated) ? e.dated : '');
-      const fl = (meta.fromByBank||{})[bank], floor = (fl && fl>CHQ_FROM) ? fl : CHQ_FROM;
-      if(!doi || doi < floor) return;
-      if(cancelled){ skipCan++; return; }
-      if(!(amtOf(e)>0)) return;
-      if(!bank){ noBank.add(String(e.acc||'').trim()); return; }
-      if(findRow(e,bank) || findLoaded(e,bank)) return;
-      const n = chNoOf(e);
-      const parts = ['Chq No. '+(n||'—')+(chqDateOK(e.dated)?' dt. '+fmtDMY(e.dated):'')];
-      if(e.to) parts.push(String(e.to).trim());
-      if(e.purpose) parts.push(String(e.purpose).trim());
-      parts.push('Issued '+fmtDMY(doi));
-      fresh.push({bank, id:docId(e), data:{
-        date:null, particulars:chqEsc(parts.join(' – ')), received:null, payment:amtOf(e),
-        chqPending:true, chqImported:true, chqRegId:e.id!=null?e.id:null, chqSl:sl, chqNo:n, chqDoi:doi, chqCancelled:false,
-        createdAt:firebase.firestore.FieldValue.serverTimestamp()
-      }});
+      const bank = bankOf(e); if(!bank) return;
+      const r = findRow(e,bank), cancelled = chqIsCancelled(e);
+      if(r && r.chqImported && r.chqPending===true && !chqDateOK(r.date) && (r.chqCancelled===true)!==cancelled) flags.push({bank, id:r.id, cancelled});
     });
-    // pending cheques whose register entry has been deleted → flag as cancelled
-    if(reg.length) BANKS.forEach(b=>(ALLD.pb[b.id]||[]).forEach(r=>{
+    BANKS.forEach(b=>(ALLD.pb[b.id]||[]).forEach(r=>{
       if(r.chqImported && r.chqPending===true && !chqDateOK(r.date) && r.chqCancelled!==true && r.chqRegId!=null && !regIds.has(r.chqRegId) && !flags.some(f=>f.id===r.id))
         flags.push({bank:b.id, id:r.id, cancelled:true});
     }));
+    if(flags.length){
+      const batch = db.batch();
+      flags.forEach(f=>batch.update(db.collection('passbook').doc(f.bank).collection('entries').doc(f.id), {chqCancelled:f.cancelled}));
+      await batch.commit();
+    }
 
-    if(fresh.length > 25 && !manual && chqDeclined){ return; }
-    if(fresh.length > 25 && !confirm('Cheque Register has '+fresh.length+' new cheques (issued from 01-04-2024, after Sl. '+mark+') to add as PENDING Pass Book entries.\n\nAdd them now?\n(If many look like old, already-entered cheques, press Cancel and use "Fetch cut-off" to set the last Sl. No. already entered.)')){
-      chqDeclined = true; chqShowStatus('waiting for your decision (use Sync to retry)'); return;
+    // cheques issued on the chosen date
+    const dayRows = reg.filter(e=>doiOf(e)===day);
+    const fresh = [], noBank = new Set();
+    let skipCan = 0, already = 0;
+    dayRows.forEach(e=>{
+      if(chqIsCancelled(e)){ skipCan++; return; }
+      if(!(amtOf(e)>0)) return;
+      const bank = bankOf(e);
+      if(!bank){ noBank.add(String(e.acc||'').trim()); return; }
+      if(findRow(e,bank) || findLoaded(e,bank)){ already++; return; }
+      fresh.push({e, bank});
+    });
+    const dLabel = fmtDMY(day);
+    if(!fresh.length){
+      const msg = dayRows.length
+        ? 'No NEW cheque entry for '+dLabel+'.\nCheques of this date already in Pass Book: '+already+(skipCan?'\nCancelled (skipped): '+skipCan:'')
+        : 'No cheque has been issued/entered in the Cheque Register for '+dLabel+'.';
+      chqShowStatus(msg.split('\n')[0]);
+      if(manual) alert(msg+(noBank.size?'\nNo Pass Book mapped for A/C: '+[...noBank].join(', '):''));
+      return;
     }
-    const ops = [];
-    fresh.forEach(f=>ops.push(b=>b.set(db.collection('passbook').doc(f.bank).collection('entries').doc(f.id), f.data)));
-    flags.forEach(f=>ops.push(b=>b.update(db.collection('passbook').doc(f.bank).collection('entries').doc(f.id), {chqCancelled:f.cancelled})));
-    for(let i=0;i<ops.length;i+=400){ const batch = db.batch(); ops.slice(i,i+400).forEach(o=>o(batch)); await batch.commit(); }
-    const bfBanks = Object.keys(meta.fromByBank||{}).filter(b=>(meta.fromByBank||{})[b] && !(meta.backfilled||{})[b]);
-    if(maxSl > mark || typeof meta.lastSl!=='number' || bfBanks.length){
-      const last = reg.find(e=>(Number(e.sl)||0)===maxSl) || {};
-      const lastDoi = chqDateOK(last.doi) ? last.doi : (meta.lastDoi||null);
-      const bfObj = {}; bfBanks.forEach(b=>{ bfObj[b] = true; });
-      await db.doc(CHQ_META_DOC).set({lastSl:maxSl, lastDoi, backfilled:bfObj, updatedAt:firebase.firestore.FieldValue.serverTimestamp(), updatedBy:auth.currentUser.email||''},{merge:true});
-      chqMeta = {...meta, lastSl:maxSl, lastDoi, backfilled:{...(meta.backfilled||{}), ...bfObj}};
+    if(!confirm('🔔 '+fresh.length+' NEW cheque'+(fresh.length===1?'':'s')+' found in the Cheque Register for '+dLabel+', not yet in the Pass Book.\n\nImport them ONE BY ONE (you will be asked for each cheque)?')){
+      chqShowStatus(fresh.length+' new cheque(s) for '+dLabel+' — not imported'); return;
     }
-    const note = (fresh.length?fresh.length+' new pending cheque(s) added':'no new cheques') + (flags.length?' · '+flags.length+' flagged cancelled':'');
-    chqShowStatus(note);
-    if(manual){
-      alert('Cheque Register sync done.\n\nNew pending cheques added: '+fresh.length+'\nCancelled cheques skipped: '+skipCan+'\nFlagged as cancelled (already in Pass Book): '+flags.length
-        +(noBank.size?'\nNo Pass Book mapped for A/C: '+[...noBank].join(', '):''));
+    let added = 0, skipped = 0;
+    for(let i=0;i<fresh.length;i++){
+      const {e, bank} = fresh[i];
+      const bl = (BANKS.find(b=>b.id===bank)||{}).label || bank, n = chNoOf(e);
+      const ok = confirm('Cheque '+(i+1)+' of '+fresh.length+'\n\nSl. No.: '+(e.sl!=null?e.sl:'—')+'\nChq No.: '+(n||'—')+(chqDateOK(e.dated)?'  dt. '+fmtDMY(e.dated):'')
+        +'\nPass Book: '+bl+'\nTo: '+(e.to||'—')+'\nPurpose: '+(e.purpose||'—')+'\nAmount: ₹'+inr(amtOf(e))
+        +'\n\nOK = import this cheque as PENDING Pass Book entry\nCancel = skip this cheque');
+      if(!ok){ skipped++; continue; }
+      const parts = ['Chq No. '+(n||'—')+(chqDateOK(e.dated)?' dt. '+fmtDMY(e.dated):'')];
+      if(e.to) parts.push(String(e.to).trim());
+      if(e.purpose) parts.push(String(e.purpose).trim());
+      parts.push('Issued '+fmtDMY(day));
+      await db.collection('passbook').doc(bank).collection('entries').doc(docId(e)).set({
+        date:null, particulars:chqEsc(parts.join(' – ')), received:null, payment:amtOf(e),
+        chqPending:true, chqImported:true, chqRegId:e.id!=null?e.id:null, chqSl:Number(e.sl)||0, chqNo:n, chqDoi:day, chqCancelled:false,
+        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+      });
+      added++;
     }
+    chqShowStatus('Cheques of '+dLabel+': '+added+' imported, '+skipped+' skipped');
+    alert('Done for '+dLabel+'.\nImported: '+added+'\nSkipped: '+skipped+(skipCan?'\nCancelled (not offered): '+skipCan:''));
   }catch(err){
     console.error(err); chqShowStatus('error: '+err.message);
-    if(manual) alert('Cheque Register sync failed: '+err.message);
+    if(manual) alert('Cheque check failed: '+err.message);
   }finally{ chqBusy = false; }
 }
 
@@ -991,77 +987,9 @@ async function loadBankFile(input){
       for(let i=0;i<oldRows.length;i+=400){ const b = db.batch(); oldRows.slice(i,i+400).forEach(r=>b.delete(db.collection('passbook').doc(bank).collection('entries').doc(r.id))); await b.commit(); }
     }
     for(let i=0;i<ops.length;i+=400){ const batch = db.batch(); ops.slice(i,i+400).forEach(o=>o(batch)); await batch.commit(); }
-    {
-      // cheques issued from this Pass Book's first date that are NOT in the bank data are fetched from the Cheque Register as pending
-      const m0 = await chqGetMeta();
-      const mind = arr.map(r=>chqParseDate(r.date)).filter(chqDateOK).sort()[0];
-      if(mind){
-        const prev = (m0.fromByBank||{})[bank];
-        const from = (replace || !prev || mind<prev) ? mind : prev;
-        await db.doc(CHQ_META_DOC).set({fromByBank:{[bank]:from}, backfilled:{[bank]:false}},{merge:true});
-        chqMeta = {...m0, fromByBank:{...(m0.fromByBank||{}),[bank]:from}, backfilled:{...(m0.backfilled||{}),[bank]:false}};
-      }
-      chqBusy = false; chqSchedule();
-    }
-    alert('Done. W/D dates set: '+nMatch+' · new entries added: '+nNew+(replace?'\nOld entries removed: '+oldRows.length+'\nCheques issued later and not found in the bank data will now appear as PENDING.':''));
+    chqBusy = false;
+    alert('Done. W/D dates set: '+nMatch+' · new entries added: '+nNew+(replace?'\nOld entries removed: '+oldRows.length+'\nUse 🔔 Check new cheques to import any cheques issued on a date, one by one.':''));
   }catch(err){ chqBusy = false; console.error(err); alert('Load failed: '+err.message); }
-}
-
-/* ---------- First-time load of ALL Pass Books from one JSON: {"mdm_bank":[...],"ssa_sbi":[...],"dev_bank":[...],"voc_bank":[...]} ----------
-   Wipes only the Pass Books named in the file (backup downloaded first), loads their rows fresh (exact repeats inside the file are dropped),
-   marks "[CHECK]" rows (read on assumption from an unclear scan) in yellow, then lets the Cheque Register fetch the cheques not yet debited as PENDING. */
-async function loadAllFirstTime(input){
-  const file = input.files[0]; input.value = '';
-  if(!file) return;
-  if(!auth.currentUser){ alert('Please sign in first.'); return; }
-  let obj;
-  try{ obj = JSON.parse(await file.text()); }catch(err){ alert('Could not read the file: '+err.message); return; }
-  const ids = BANKS.map(b=>b.id);
-  const keys = Object.keys(obj||{}).filter(k=>ids.includes(k) && Array.isArray(obj[k]));
-  if(!keys.length){ alert('No Pass Book found in the file.\nExpected keys: '+ids.join(', ')); return; }
-  if(!chqRegLoaded || !ids.every(i=>ALLD.pb[i])){ alert('Data is still loading — try again in a moment.'); return; }
-  const plan = keys.map(k=>{
-    const seen = new Set(), rows = []; let bad = 0, dup = 0, chk = 0;
-    obj[k].forEach(r=>{
-      const date = chqParseDate(r.date), rc = Number(r.received)||0, py = Number(r.payment)||0;
-      if(!date || !(rc>0||py>0)){ bad++; return; }
-      const p = String(r.particulars||'').trim() || 'Bank entry', cn = String(r.chqNo||'').trim();
-      const key = [date,p.toLowerCase(),rc,py,cn].join('|');
-      if(seen.has(key)){ dup++; return; } seen.add(key);
-      if(/\[CHECK\]/i.test(p)) chk++;
-      rows.push({date, particulars:chqEsc(p), received: rc>0?rc:null, payment: py>0?py:null, bankLoaded:true, chqNo:cn||null});
-    });
-    return {bank:k, label:(BANKS.find(b=>b.id===k)||{}).label||k, rows, bad, dup, chk, old:(ALLD.pb[k]||[])};
-  });
-  if(!(await verifyDeletePassword())) return;
-  const tot = plan.reduce((n,x)=>n+x.old.length,0);
-  if(!confirm('FIRST-TIME LOAD — these Pass Books will be wiped and re-loaded:\n\n'+plan.map(x=>'  • '+x.label+': delete '+x.old.length+' old rows → load '+x.rows.length+' rows ('+x.chk+' on assumption [CHECK]'+(x.dup?', '+x.dup+' repeats dropped':'')+(x.bad?', '+x.bad+' invalid skipped':'')+')').join('\n')
-    +'\n\nOther Pass Books are NOT touched. A backup of the '+tot+' old rows is downloaded first.\n\nContinue?')) return;
-  if(prompt('Type RESET (capital letters) to confirm:')!=='RESET') return;
-  chqBusy = true;
-  try{
-    const m0 = await chqGetMeta();
-    const t = new Date(), z=n=>String(n).padStart(2,'0');
-    const bk = {}; plan.forEach(x=>{ bk[x.bank] = x.old.map(r=>({...r, createdAt: r.createdAt && r.createdAt.toMillis ? r.createdAt.toMillis() : null})); });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(bk,null,1)],{type:'application/json'}));
-    a.download = 'passbook-before-reset-backup-'+t.getFullYear()+z(t.getMonth()+1)+z(t.getDate())+'-'+z(t.getHours())+z(t.getMinutes())+'.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    await new Promise(r=>setTimeout(r,600));
-    for(const x of plan){
-      const col = db.collection('passbook').doc(x.bank).collection('entries');
-      for(let i=0;i<x.old.length;i+=400){ const b = db.batch(); x.old.slice(i,i+400).forEach(r=>b.delete(col.doc(r.id))); await b.commit(); }
-      for(let i=0;i<x.rows.length;i+=400){ const b = db.batch(); x.rows.slice(i,i+400).forEach(r=>b.set(col.doc(), {...r, createdAt:firebase.firestore.FieldValue.serverTimestamp()})); await b.commit(); }
-    }
-    // old register cheques must not flood back: cut-off = everything in the register today; cheques issued from each book's first date and not found in its rows come back as PENDING
-    const mx = chqReg.reduce((m,e)=>Math.max(m,Number(e.sl)||0),0);
-    const fromBy = {...(m0.fromByBank||{})}, bfBy = {...(m0.backfilled||{})};
-    plan.forEach(x=>{ const mind = x.rows.map(r=>r.date).filter(chqDateOK).sort()[0]; if(mind){ fromBy[x.bank] = mind; bfBy[x.bank] = false; } else { delete fromBy[x.bank]; delete bfBy[x.bank]; } });
-    await db.doc(CHQ_META_DOC).set({lastSl:mx, fromByBank:fromBy, backfilled:bfBy},{merge:true});
-    chqMeta = {...m0, lastSl:mx, fromByBank:fromBy, backfilled:bfBy};
-    SEL.pb.clear();
-    alert('Done.\n\n'+plan.map(x=>x.label+': '+x.rows.length+' rows loaded').join('\n')+'\n\nYellow rows = entered on assumption ([CHECK]); correct them later and delete the word [CHECK].\nCheques issued but not yet debited will now be fetched from the Cheque Register as PENDING.');
-  }catch(err){ console.error(err); alert('Reset failed: '+err.message); }
-  finally{ chqBusy = false; chqSchedule(); }
 }
 
 /* ---------- Backup ---------- */
@@ -1152,7 +1080,7 @@ async function pbClearAll(){
     const fb = {...(m0.fromByBank||{})}, bf = {...(m0.backfilled||{})}; cnt.forEach(c=>{ delete fb[c.b.id]; delete bf[c.b.id]; });
     chqMeta = {...m0, lastSl:mx, fromByBank:fb, backfilled:bf};
     SEL.pb.clear();
-    alert('Cleared '+total+' entries. Now load the bank data (📄) for each Pass Book — cheques not yet debited will be fetched from the Cheque Register automatically.');
+    alert('Cleared '+total+' entries. Now load the bank data (📄) for each Pass Book; use 🔔 Check new cheques to import pending cheques by date.');
   }catch(err){ console.error(err); alert('Clear failed: '+err.message); }
   finally{ chqBusy = false; }
 }
