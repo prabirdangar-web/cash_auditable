@@ -100,6 +100,42 @@
     body.print-report #reportPrintRoot{display:block}
     body.print-report .rep-tbl tr{break-inside:avoid}body.print-report .rep-fund{break-after:avoid}
   }
+  /* ===== Professional half-A4 (A5 landscape) voucher ===== */
+  #voucherPrintRoot{display:none}
+  .vch{width:198mm;height:134mm;box-sizing:border-box;border:1.6px solid #0b2545;padding:1.2mm;background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;margin:0 auto}
+  .vch-in{border:.6px solid #0b2545;height:100%;display:flex;flex-direction:column;padding:3mm 4mm 2.5mm;box-sizing:border-box}
+  .vch-school{text-align:center;font-weight:800;font-size:15pt;color:#0b2545;letter-spacing:.4px}
+  .vch-addr{text-align:center;font-size:7.5pt;color:#444;margin-top:.6mm}
+  .vch-title{margin:2mm auto;width:100%;text-align:center;background:#0b2545;color:#fff;font-weight:700;letter-spacing:3px;font-size:10pt;padding:1mm 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .vch-meta{display:flex;gap:3mm;margin-bottom:2mm}
+  .vch-meta div{flex:1;border:.5px solid #777;padding:1mm 2mm}
+  .vch-meta span{display:block;font-size:6.5pt;color:#555;text-transform:uppercase;letter-spacing:.5px}
+  .vch-meta b{font-size:10.5pt}
+  .vch-tbl{width:100%;border-collapse:collapse;font-size:9pt}
+  .vch-tbl tr{background:none!important}
+  .vch-tbl td{border:.5px solid #777;padding:1.6mm 2mm;vertical-align:top;font-family:Arial,Helvetica,sans-serif}
+  .vch-tbl td.k{width:32mm;background:#f1f3f8;font-weight:700;font-size:8pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .vch-purpose{min-height:13mm}
+  .vch-amt{font-size:14pt;font-weight:800}
+  .vch-note{font-size:7.5pt;font-style:italic;margin-top:2mm;color:#222}
+  .vch-signs{margin-top:auto;padding-top:11mm;display:flex;gap:3mm}
+  .vch-signs div{flex:1;border-top:.6px solid #000;text-align:center;font-size:6.8pt;padding-top:1mm;font-weight:700}
+  /* picker */
+  .vpk-wrap{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10000;display:flex;align-items:center;justify-content:center;font-family:Arial,sans-serif}
+  .vpk-box{background:#fff;width:min(1000px,96vw);max-height:90vh;display:flex;flex-direction:column;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  .vpk-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--navy);color:#fff;border-radius:8px 8px 0 0}
+  .vpk-head button{background:none;border:0;color:#fff;font-size:1.1rem;cursor:pointer}
+  .vpk-tools{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;align-items:center;font-size:.8rem;border-bottom:1px solid var(--line)}
+  .vpk-tools input,.vpk-tools select{padding:6px;border:1px solid var(--line);border-radius:4px;font-size:.8rem}
+  .vpk-list{overflow:auto;padding:0 14px 8px}
+  .vpk-list button{padding:4px 12px;border:0;background:var(--green);color:#fff;border-radius:4px;cursor:pointer}
+  .vpk-foot{padding:8px 14px;font-size:.72rem;color:var(--grey);border-top:1px solid var(--line)}
+  @media print{
+    body.print-voucher{background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    body.print-voucher #app,body.print-voucher header.top,body.print-voucher #loginScreen,body.print-voucher footer,body.print-voucher #vpk{display:none!important}
+    body.print-voucher #voucherPrintRoot{display:block}
+    body.print-voucher .vch{margin:0;break-inside:avoid}
+  }
 </style>
 </head>
 <body>
@@ -190,10 +226,11 @@
     <div class="toolbar noprint">
       <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="v_date">
       <select id="v_fund"><option value="Development">Development</option><option value="SSM">SSM</option><option value="RMSA">RMSA</option><option value="Hostel Fund">Hostel Fund</option><option value="Vocational">Vocational</option><option value="MDM">MDM</option></select>
-      <input type="text" id="v_vno" placeholder="Voucher No" style="width:110px;">
+      <input type="text" id="v_vno" placeholder="Voucher No (auto)" style="width:130px;">
       <input type="text" id="v_payto" placeholder="Pay To" style="min-width:160px;">
       <input type="text" id="v_purpose" placeholder="Purpose / Particulars" style="min-width:220px;">
       <input type="number" id="v_amount" placeholder="Amount (₹)" style="width:120px;">
+      <button class="secondary" onclick="vpkOpen()" title="Select a payment already entered in a Pass Book or Cash Book and fill this voucher from it">📥 Pick from Pass Book / Cash Book</button>
       <button onclick="addVoucher()">+ Add Voucher</button>
       <button class="secondary" onclick="printVoucher()">🖨 Print Selected</button>
     </div>
@@ -211,7 +248,7 @@
         <tbody id="v_tbody"></tbody>
       </table>
     </div>
-    <div class="voucherCard" id="voucherPrintArea" style="display:none;"></div>
+    <div id="voucherPrintArea" class="noprint" style="display:none;overflow:auto;margin:12px 0;"></div>
   </div>
 
   <!-- PASS BOOK -->
@@ -270,6 +307,7 @@
 
 <footer class="note noprint">Taldangra Fulmati High School [H.S.] — internal accounts tool. Synced live via Firebase.</footer>
 <div id="reportPrintRoot"></div>
+<div id="voucherPrintRoot"></div>
 
 <script>
 /* ======================= FIREBASE CONFIG ======================= */
@@ -1053,7 +1091,7 @@ function renderVouchers(){
 function addVoucher(){
   const date = dmyVal('v_date');
   const fund = document.getElementById('v_fund').value;
-  const vno = document.getElementById('v_vno').value.trim();
+  let vno = document.getElementById('v_vno').value.trim(); if(!vno) vno = String(autoVno(fund));
   const payTo = document.getElementById('v_payto').value.trim();
   const purpose = document.getElementById('v_purpose').value.trim();
   const amount = document.getElementById('v_amount').value;
@@ -1092,29 +1130,6 @@ function saveEditVoucher(id){
     date: date || null, fund, vno: vno||null, payTo, purpose: purpose||null,
     amount: Number(amount)
   }).then(()=>{ vEditingId = null; });
-}
-function printVoucher(){
-  const sel = document.querySelector('input[name="vsel"]:checked');
-  if(!sel){ alert('Select a voucher row first (radio button on the left).'); return; }
-  const e = vEntries.find(x=>x.id===sel.value);
-  const area = document.getElementById('voucherPrintArea');
-  area.innerHTML = `
-    <h2>TALDANGRA FULMATI HIGH SCHOOL [H.S.]</h2>
-    <div class="addr">P.O. Taldangra, Block-Taldangra, Sub. Div. Khatra, Dist. Bankura</div>
-    <table>
-      <tr><td><b>Voucher No.</b></td><td>${e.vno||''}</td><td><b>Date</b></td><td>${fmtDMY(e.date)}</td></tr>
-      <tr><td><b>Fund / Category</b></td><td colspan="3">${e.fund||''}</td></tr>
-      <tr><td><b>Pay To</b></td><td colspan="3">${e.payTo||''}</td></tr>
-      <tr><td><b>Purpose / Particulars</b></td><td colspan="3">${e.purpose||''}</td></tr>
-      <tr><td><b>Amount (Rs.)</b></td><td colspan="3" style="font-size:1.1rem;font-weight:bold;">${inr(e.amount)}</td></tr>
-    </table>
-    <div style="display:flex;justify-content:space-between;margin-top:60px;">
-      <div>Signature of Payee</div><div>Passed for Payment — Headmaster</div>
-    </div>`;
-  area.style.display = 'block';
-  document.getElementById('panel-voucher').classList.add('printing');
-  window.print();
-  document.getElementById('panel-voucher').classList.remove('printing');
 }
 
 </script>
@@ -1278,6 +1293,143 @@ function repExcel(){
   E.push([g.label,a.label,'','','Closing Balance','',a.close]);}));
  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(S),'Synopsis');XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(E),'Statement');
  XLSX.writeFile(wb,'TFHS_Report_'+(repData.to||'upto-date')+'.xlsx');
+}
+</script>
+<script>
+/* ===== Voucher: auto number, professional print (half A4), pick from Pass Book / Cash Book ===== */
+function autoVno(fundLabel){
+  let m=0; const t=x=>{ const s=String(x==null?'':x).trim(); if(/^\d+$/.test(s)) m=Math.max(m,+s); };
+  vEntries.forEach(v=>{ if(!fundLabel||v.fund===fundLabel) t(v.vno); });
+  const f=FUNDS.find(x=>x.label===fundLabel); if(f) (ALLD.cb[f.id]||[]).forEach(e=>t(e.vno));
+  return m+1;
+}
+function vchWords(n){
+  const ones=['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+  const tens=['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+  const b100=x=>x<20?ones[x]:tens[Math.floor(x/10)]+(x%10?' '+ones[x%10]:'');
+  const b1000=x=>(x>=100?ones[Math.floor(x/100)]+' Hundred'+(x%100?' ':''):'')+(x%100?b100(x%100):'');
+  if(n===0) return 'Zero';
+  const parts=[]; const cr=Math.floor(n/1e7); n%=1e7; const lk=Math.floor(n/1e5); n%=1e5; const th=Math.floor(n/1e3); n%=1e3;
+  if(cr) parts.push(b1000(cr)+' Crore'); if(lk) parts.push(b100(lk)+' Lakh'); if(th) parts.push(b100(th)+' Thousand'); if(n) parts.push(b1000(n));
+  return parts.join(' ');
+}
+function vchAmtWords(a){
+  a=Math.round((Number(a)||0)*100)/100; const r=Math.floor(a), ps=Math.round((a-r)*100);
+  return 'Rupees '+vchWords(r)+(ps?' and '+vchWords(ps)+' Paise':'')+' Only';
+}
+function voucherHTML(e){
+  const amt=Number(e.amount)||0;
+  return `<div class="vch"><div class="vch-in">
+    <div class="vch-school">TALDANGRA FULMATI HIGH SCHOOL [H.S.]</div>
+    <div class="vch-addr">P.O. Taldangra, Block-Taldangra, Sub. Div. Khatra, Dist. Bankura &middot; UDISE 19132104401</div>
+    <div class="vch-title">PAYMENT VOUCHER</div>
+    <div class="vch-meta">
+      <div><span>Voucher No.</span><b>${rEsc(e.vno||'')}</b></div>
+      <div><span>Date</span><b>${rEsc(fmtDMY(e.date))}</b></div>
+      <div><span>Fund / Category</span><b>${rEsc(e.fund||'')}</b></div>
+    </div>
+    <table class="vch-tbl">
+      <tr><td class="k">Pay To</td><td><b>${rEsc(e.payTo||'')}</b></td></tr>
+      <tr><td class="k">Purpose / Particulars</td><td class="vch-purpose">${rEsc(e.purpose||'')}</td></tr>
+      <tr><td class="k">Amount (Rs.)</td><td class="vch-amt">&#8377; ${rEsc(f2(amt))}</td></tr>
+      <tr><td class="k">Amount in words</td><td><b>${rEsc(vchAmtWords(amt))}</b></td></tr>
+    </table>
+    <div class="vch-note">Received the above sum of ${rEsc(vchAmtWords(amt))} in full settlement of the above claim.</div>
+    <div class="vch-signs">
+      <div>Signature of Payee</div><div>Administrator</div><div>AHM</div><div>President</div><div>Secretary</div><div>Head Master</div>
+    </div>
+  </div></div>`;
+}
+function printVoucher(){
+  const sel=document.querySelector('input[name="vsel"]:checked');
+  if(!sel){ alert('Select a voucher row first (radio button on the left).'); return; }
+  const e=vEntries.find(x=>x.id===sel.value); if(!e) return;
+  const html=voucherHTML(e), area=document.getElementById('voucherPrintArea');
+  area.innerHTML=html; area.style.display='block';
+  document.getElementById('voucherPrintRoot').innerHTML=html;
+  const st=document.createElement('style'); st.textContent='@media print{@page{size:210mm 148mm;margin:5mm}}'; document.head.appendChild(st);
+  document.body.classList.add('print-voucher');
+  const done=()=>{ document.body.classList.remove('print-voucher'); st.remove(); window.removeEventListener('afterprint',done); };
+  window.addEventListener('afterprint',done); setTimeout(()=>window.print(),60);
+}
+
+/* ---- Picker ---- */
+const VPK={list:[]};
+const vpkDec=s=>{ const t=document.createElement('textarea'); t.innerHTML=String(s==null?'':s); return t.value; };
+function vpkBuild(){
+  if(document.getElementById('vpk')) return;
+  const d=document.createElement('div'); d.id='vpk'; d.className='vpk-wrap noprint'; d.style.display='none';
+  d.innerHTML=`<div class="vpk-box">
+    <div class="vpk-head"><b>Pick a payment from Pass Book / Cash Book</b><button onclick="vpkClose()">&#10006;</button></div>
+    <div class="vpk-tools">
+      <select id="vpk_src" onchange="vpkRender()"><option value="all">Pass Book + Cash Book</option><option value="pb">Pass Book only</option><option value="cb">Cash Book only</option></select>
+      <select id="vpk_acct" onchange="vpkRender()"></select>
+      <input type="text" id="vpk_q" placeholder="Search particulars, V.No, amount…" style="min-width:200px" oninput="vpkRender()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="From DD-MM-YYYY" id="vpk_from" style="width:130px" oninput="vpkRender()">
+      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="To DD-MM-YYYY" id="vpk_to" style="width:130px" oninput="vpkRender()">
+      <label><input type="checkbox" id="vpk_hide" onchange="vpkRender()"> hide entries that already have a voucher</label>
+    </div>
+    <div class="vpk-list"><table><thead><tr><th>Date</th><th>Source</th><th>Particulars</th><th>V.No</th><th>Payment (₹)</th><th></th></tr></thead><tbody id="vpk_body"></tbody></table></div>
+    <div class="vpk-foot" id="vpk_info"></div></div>`;
+  document.body.appendChild(d);
+}
+function vpkOpen(){
+  vpkBuild();
+  const ac=document.getElementById('vpk_acct'); ac.innerHTML='';
+  ac.add(new Option('All accounts','all'));
+  repGroups().forEach(g=>ac.add(new Option(g.label+(g.accs.length>1?' (Cash Book + Pass Book)':' (Pass Book)'),g.id)));
+  const f=FUNDS.find(x=>x.label===document.getElementById('v_fund').value); if(f) ac.value=f.id;
+  document.getElementById('vpk').style.display='flex'; vpkRender();
+}
+function vpkClose(){ const d=document.getElementById('vpk'); if(d) d.style.display='none'; }
+function vpkHas(fl,p,vno,d){
+  return vEntries.some(v=>(!fl||v.fund===fl)&&Math.abs((Number(v.amount)||0)-p)<0.005&&((vno&&String(v.vno||'')===String(vno))||v.date===d));
+}
+function vpkRender(){
+  const src=document.getElementById('vpk_src').value, acct=document.getElementById('vpk_acct').value;
+  const q=document.getElementById('vpk_q').value.trim().toLowerCase();
+  const from=dmyVal('vpk_from'), to=dmyVal('vpk_to'), hide=document.getElementById('vpk_hide').checked;
+  const out=[];
+  repGroups().forEach(g=>{
+    if(acct!=='all'&&g.id!==acct) return;
+    const fl=(FUNDS.find(f=>f.id===g.id)||{}).label||'';
+    g.accs.forEach(a=>{
+      if(src!=='all'&&src!==a.kind) return;
+      (ALLD[a.kind][a.id]||[]).forEach(e=>{
+        const p=Number(e.payment)||0; if(!(p>0)) return;
+        const pend=e.chqPending===true&&!dateSortKey(e.date);
+        if(pend&&e.chqCancelled===true) return;
+        const d=dateSortKey(e.date)||(pend?(e.chqDoi||''):'');
+        if(from&&(!d||d<from)) return; if(to&&(!d||d>to)) return;
+        const text=vpkDec(e.particulars);
+        if(q&&![text,e.vno,p,fmtDMY(d)].join(' ').toLowerCase().includes(q)) return;
+        const has=vpkHas(fl,p,e.vno,d); if(hide&&has) return;
+        out.push({e,a,g,d,p,pend,fl,text,has});
+      });
+    });
+  });
+  out.sort((x,y)=>y.d.localeCompare(x.d)); VPK.list=out.slice(0,300);
+  document.getElementById('vpk_body').innerHTML=VPK.list.map((r,i)=>`<tr>
+    <td>${rEsc(r.d?fmtDMY(r.d):'—')}${r.pend?'<br><small style="color:#b36b00">cheque issued, not yet debited</small>':''}</td>
+    <td>${r.a.kind==='cb'?'Cash Book':'Pass Book'}<br><small>${rEsc(r.g.label)}</small></td>
+    <td>${rEsc(r.text)}</td><td>${rEsc(r.e.vno||'')}</td><td class="num">${inr(r.p)}</td>
+    <td>${r.has?'<span class="badge ok">voucher exists</span> ':''}<button onclick="vpkPick(${i})">Use</button></td></tr>`).join('')||'<tr><td colspan="6">No payment entries found.</td></tr>';
+  document.getElementById('vpk_info').textContent=(out.length>300?'Showing newest 300 of '+out.length+' — narrow with search/dates. ':out.length+' payment entr'+(out.length===1?'y. ':'ies. '))+'Click "Use" to fill the voucher form, check it, then press + Add Voucher.';
+}
+function vpkPick(i){
+  const r=VPK.list[i]; if(!r) return; const e=r.e;
+  document.getElementById('v_date').value=r.d?fmtDMY(r.d):'';
+  if(r.fl) document.getElementById('v_fund').value=r.fl;
+  const fl=document.getElementById('v_fund').value;
+  document.getElementById('v_vno').value=e.vno||String(autoVno(fl));
+  let payTo='', purpose=r.text;
+  if(e.chqRegId!=null){ const c=chqReg.find(x=>x.id===e.chqRegId); if(c){ payTo=String(c.to||'').trim(); if(c.purpose) purpose=String(c.purpose).trim(); } }
+  if(!payTo){ sugBuild(); const o=SUG.parts.find(x=>x.text.toLowerCase()===r.text.replace(/\s+/g,' ').trim().toLowerCase()); if(o&&o.last&&o.last.payTo) payTo=o.last.payTo; }
+  document.getElementById('v_payto').value=payTo;
+  document.getElementById('v_purpose').value=purpose;
+  document.getElementById('v_amount').value=r.p;
+  vpkClose();
+  const pt=document.getElementById('v_payto'); if(!payTo) pt.focus();
 }
 </script>
 </body>
