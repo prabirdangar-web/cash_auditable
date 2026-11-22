@@ -136,6 +136,12 @@
     body.print-voucher #voucherPrintRoot{display:block}
     body.print-voucher .vch{margin:0;break-inside:avoid}
   }
+  @keyframes chqBlink{0%,100%{opacity:1}50%{opacity:.15}}
+  .chqNewTag{display:inline-block;background:#d60000;color:#fff;font:700 .68rem Arial,sans-serif;padding:1px 7px;border-radius:9px;margin-right:6px;animation:chqBlink .8s infinite}
+  #chqAlert{display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#d60000;color:#fff;font:700 .88rem Arial,sans-serif;padding:9px 14px;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.4)}
+  #chqAlert .txt{animation:chqBlink .9s infinite}
+  #chqAlert button{margin-left:12px;padding:4px 12px;border:0;border-radius:4px;background:#fff;color:#d60000;font-weight:700;cursor:pointer}
+  @media print{#chqAlert{display:none!important}}
 </style>
 </head>
 <body>
@@ -261,8 +267,7 @@
       <input type="number" id="pb_payment" placeholder="Withdrawal (₹)" style="width:120px;">
       <button onclick="addPassbookEntry()">+ Add Entry</button>
       <button class="secondary" onclick="window.print()">🖨 Print</button>
-      <input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="DD-MM-YYYY" id="chq_date" title="Cheque issue date to check (default today)" style="width:110px">
-      <button class="secondary" onclick="chqSync(true)" title="Check the Cheque Issue Register for cheques issued on this date and import them one by one">🔔 Check new cheques</button>
+      <button class="secondary" onclick="chqSync(true)" title="Re-check the Cheque Issue Register (FY 2024-25 &amp; 2025-26) against all Pass Books now">🔄 Re-check cheques</button>
       <span class="balBox" id="pb_balance">Balance: —</span>
     </div>
     <div id="chq_status" class="noprint" style="font-family:Arial,sans-serif;font-size:.76rem;color:var(--grey);margin:-4px 0 8px;"></div>
@@ -308,6 +313,7 @@
 <footer class="note noprint">Taldangra Fulmati High School [H.S.] — internal accounts tool. Synced live via Firebase.</footer>
 <div id="reportPrintRoot"></div>
 <div id="voucherPrintRoot"></div>
+<div id="chqAlert" class="noprint"><span class="txt" id="chqAlertTxt"></span><button onclick="chqAck()">✔ Seen</button></div>
 
 <script>
 /* ======================= FIREBASE CONFIG ======================= */
@@ -417,7 +423,6 @@ auth.onAuthStateChanged(user=>{
     watchVouchers();
     repWatchAll();
     chqWatch(); chqShowStatus('');
-    (function(){ const d=new Date(), z=n=>String(n).padStart(2,'0'); const el=document.getElementById('chq_date'); if(el) el.value=z(d.getDate())+'-'+z(d.getMonth()+1)+'-'+d.getFullYear(); })();
   } else {
     chqUnwatch();
     document.getElementById('loginScreen').style.display='block';
@@ -738,7 +743,7 @@ function renderPassbook(){
       if(e.id === pbEditingId){ tr.innerHTML = pbEditCells(e, '—'); }
       else {
         tr.innerHTML = `<td class="noprint"><input type="checkbox" ${SEL.pb.has(e.id)?'checked':''} onchange="selToggle('pb','${e.id}',this.checked)"></td><td><span class="noprint"><input type="text" class="dmy" inputmode="numeric" maxlength="10" placeholder="W/D date" id="wd_${e.id}" style="width:100px"><button onclick="setWD('${e.id}')" title="Save W/D date" style="cursor:pointer">✔</button></span><span class="printOnly">Pending</span></td>
-          <td style="${canc?'text-decoration:line-through;color:var(--grey)':''}">${e.particulars||''}${canc?' <b style="color:var(--red);text-decoration:none">[CANCELLED in register]</b>':''}</td>
+          <td style="${canc?'text-decoration:line-through;color:var(--grey)':''}">${e.chqNew===true&&!canc?'<span class="chqNewTag">NEW</span>':''}${e.particulars||''}${canc?' <b style="color:var(--red);text-decoration:none">[CANCELLED in register]</b>':''}</td>
           <td class="num"></td><td class="num pay">${inr(e.payment)}</td>
           <td class="num" style="color:var(--grey)">${canc?'—':'pending'}</td>
           <td class="noprint rowActions"><button onclick="startEditPass('${e.id}')">✏️</button><button onclick="deletePassEntry('${e.id}')">🗑</button></td>`;
@@ -813,12 +818,12 @@ async function setWD(id){
    • New cheques in the register are fetched automatically as "pending" Pass Book withdrawals (date blank).
    • They do NOT touch the bank balance until the W/D date is set (typed, or matched from the bank pass-book data you load).
    • Cancelled cheques are never fetched (and a pending entry is flagged if the cheque is cancelled later).
-   • Only cheques issued from 01-04-2024 (FY 2024-25) onward.
+   • Only cheques issued 01-04-2024 to 31-03-2026 (FY 2024-25 & 2025-26) are checked.
    • A cut-off (last Sl. No. fetched) is remembered, so earlier entries are never fetched again.
    Source: Firestore doc tfhs/chequeRegisterEntries (field "entries"). */
 const CHQ_REG_DOC = 'tfhs/chequeRegisterEntries';
 const CHQ_META_DOC = '_meta/chqImport';
-const CHQ_FROM = '2024-04-01';
+const CHQ_FROM = '2024-04-01', CHQ_TO = '2026-03-31'; // FY 2024-25 and 2025-26
 const CHQ_ACC_TO_BANK = {
   '5536011000624':'dev_bank',
   '11110260145':'voc_bank',
@@ -844,8 +849,8 @@ function chqWatch(){
     chqRegLoaded = true; chqSchedule();
   }, err=>console.error('Cheque register watch error:', err));
 }
-function chqUnwatch(){ if(chqUnsub){ chqUnsub(); chqUnsub=null; } chqRegLoaded=false; chqAutoDone=false; }
-function chqSchedule(){ if(chqAutoDone) return; clearTimeout(chqTimer); chqTimer = setTimeout(()=>{ if(!chqAutoDone && chqRegLoaded && BANKS.every(b=>ALLD.pb[b.id])) chqSync(false); }, 1500); }
+function chqUnwatch(){ if(chqUnsub){ chqUnsub(); chqUnsub=null; } chqRegLoaded=false; }
+function chqSchedule(){ clearTimeout(chqTimer); chqTimer = setTimeout(()=>{ if(chqRegLoaded && BANKS.every(b=>ALLD.pb[b.id])) chqSync(false); }, 1500); }
 async function chqGetMeta(){
   if(chqMeta) return chqMeta;
   const s = await db.doc(CHQ_META_DOC).get();
@@ -855,23 +860,27 @@ async function chqGetMeta(){
 function chqShowStatus(note){
   const el = document.getElementById('chq_status'); if(!el) return;
   const t = new Date(), z=n=>String(n).padStart(2,'0');
-  el.textContent = 'Cheque Register check · '+z(t.getHours())+':'+z(t.getMinutes())+(note?' · '+note:'');
+  el.textContent = 'Cheque Register auto-check (FY 2024-25 & 2025-26) · '+z(t.getHours())+':'+z(t.getMinutes())+(note?' · '+note:'');
 }
-let chqAutoDone = false;
+function chqAlertRender(){
+  const bar = document.getElementById('chqAlert'); if(!bar) return;
+  const by = {}; let n = 0;
+  BANKS.forEach(b=>(ALLD.pb[b.id]||[]).forEach(r=>{ if(r.chqNew===true && r.chqPending===true && !chqDateOK(r.date) && r.chqCancelled!==true){ n++; by[b.label]=(by[b.label]||0)+1; } }));
+  if(!n){ bar.style.display='none'; return; }
+  document.getElementById('chqAlertTxt').textContent = '🔔 NEW cheque entry in Cheque Register — '+n+' cheque'+(n===1?'':'s')+' not found in the bank Pass Book, added as PENDING: '+Object.keys(by).map(k=>k+' ('+by[k]+')').join(', ');
+  bar.style.display='block';
+}
+async function chqAck(){
+  try{
+    const batch = db.batch(); let c=0;
+    BANKS.forEach(b=>(ALLD.pb[b.id]||[]).forEach(r=>{ if(r.chqNew===true){ batch.update(db.collection('passbook').doc(b.id).collection('entries').doc(r.id), {chqNew:false}); c++; } }));
+    if(c) await batch.commit();
+  }catch(err){ alert('Could not clear: '+err.message); }
+}
 async function chqSync(manual){
   if(!auth.currentUser) return;
   if(!chqRegLoaded || !BANKS.every(b=>ALLD.pb[b.id])){ if(manual) alert('Data is still loading — try again in a moment.'); return; }
   if(chqBusy) return;
-  const inp = document.getElementById('chq_date');
-  let day = '';
-  if(manual){
-    day = dmyToISO(inp ? inp.value : '');
-    if(!day){ alert('Enter the cheque issue date as DD-MM-YYYY.'); return; }
-  } else {
-    const t = new Date(), z=n=>String(n).padStart(2,'0');
-    day = t.getFullYear()+'-'+z(t.getMonth()+1)+'-'+z(t.getDate());
-    chqAutoDone = true;
-  }
   chqBusy = true;
   try{
     const reg = chqReg.slice().sort((a,b)=>(Number(a.sl)||0)-(Number(b.sl)||0));
@@ -880,22 +889,19 @@ async function chqSync(manual){
     const amtOf = e=>Math.round((parseFloat(e.amount)||0)*100)/100;
     const docId = e=>'chq_'+String(e.id!=null ? e.id : ('sl'+e.sl)).replace(/[^\w-]/g,'_');
     const doiOf = e=>chqDateOK(e.doi) ? e.doi : (chqDateOK(e.dated) ? e.dated : '');
-    const findRow = (e,bank)=>{
-      const n = chNoOf(e), a = amtOf(e);
-      return (ALLD.pb[bank]||[]).find(r=> r.id===docId(e) || (e.id!=null && r.chqRegId===e.id) || (n && chqSame(r.payment,a) && (String(r.particulars||'').includes(n) || String(r.chqNo||'').trim()===n)));
+    const numOf = n=>String(n).replace(/\D/g,'').replace(/^0+/,'');
+    const inText = (txt,n)=>{ const k=numOf(n); if(!k) return false; return new RegExp('(^|\\D)0*'+k+'(\\D|$)').test(String(txt||'').replace(/&amp;/g,'&')); };
+    const inBank = (e,bank)=>{
+      const n = chNoOf(e);
+      return (ALLD.pb[bank]||[]).some(r=> r.id===docId(e) || (e.id!=null && r.chqRegId===e.id) ||
+        (n && (numOf(r.chqNo)===numOf(n) || inText(r.particulars,n))));
     };
-    const claimed = new Set();
-    const findLoaded = (e,bank)=>{
-      const a = amtOf(e), doi = doiOf(e);
-      const r = (ALLD.pb[bank]||[]).find(r=> r.bankLoaded===true && !r.chqNo && r.chqPending!==true && !claimed.has(r.id) && chqDateOK(r.date) && chqSame(r.payment,a) && (!doi || r.date>=doi));
-      if(r){ claimed.add(r.id); return r; } return null;
-    };
-    // flag already-imported pending cheques that were cancelled / deleted in the register (no new entries created)
+    // flag already-imported pending cheques that were cancelled / deleted in the register
     const regIds = new Set(reg.map(e=>e.id).filter(x=>x!=null));
     const flags = [];
     reg.forEach(e=>{
       const bank = bankOf(e); if(!bank) return;
-      const r = findRow(e,bank), cancelled = chqIsCancelled(e);
+      const r = (ALLD.pb[bank]||[]).find(r=>r.id===docId(e) || (e.id!=null && r.chqRegId===e.id)), cancelled = chqIsCancelled(e);
       if(r && r.chqImported && r.chqPending===true && !chqDateOK(r.date) && (r.chqCancelled===true)!==cancelled) flags.push({bank, id:r.id, cancelled});
     });
     BANKS.forEach(b=>(ALLD.pb[b.id]||[]).forEach(r=>{
@@ -907,56 +913,43 @@ async function chqSync(manual){
       flags.forEach(f=>batch.update(db.collection('passbook').doc(f.bank).collection('entries').doc(f.id), {chqCancelled:f.cancelled}));
       await batch.commit();
     }
-
-    // cheques issued on the chosen date
-    const dayRows = reg.filter(e=>doiOf(e)===day);
-    const fresh = [], noBank = new Set();
-    let skipCan = 0, already = 0;
-    dayRows.forEach(e=>{
+    // register cheques (FY 2024-25 & 2025-26) whose cheque no is NOT in the respective bank's Pass Book
+    const fresh = [], noBank = new Set(); let skipCan = 0, have = 0, inRange = 0;
+    reg.forEach(e=>{
+      const doi = doiOf(e);
+      if(!doi || doi < CHQ_FROM || doi > CHQ_TO) return;
+      inRange++;
       if(chqIsCancelled(e)){ skipCan++; return; }
       if(!(amtOf(e)>0)) return;
       const bank = bankOf(e);
       if(!bank){ noBank.add(String(e.acc||'').trim()); return; }
-      if(findRow(e,bank) || findLoaded(e,bank)){ already++; return; }
-      fresh.push({e, bank});
+      if(inBank(e,bank)){ have++; return; }
+      fresh.push({e, bank, doi});
     });
-    const dLabel = fmtDMY(day);
-    if(!fresh.length){
-      const msg = dayRows.length
-        ? 'No NEW cheque entry for '+dLabel+'.\nCheques of this date already in Pass Book: '+already+(skipCan?'\nCancelled (skipped): '+skipCan:'')
-        : 'No cheque has been issued/entered in the Cheque Register for '+dLabel+'.';
-      chqShowStatus(msg.split('\n')[0]);
-      if(manual) alert(msg+(noBank.size?'\nNo Pass Book mapped for A/C: '+[...noBank].join(', '):''));
-      return;
-    }
-    if(!confirm('🔔 '+fresh.length+' NEW cheque'+(fresh.length===1?'':'s')+' found in the Cheque Register for '+dLabel+', not yet in the Pass Book.\n\nImport them ONE BY ONE (you will be asked for each cheque)?')){
-      chqShowStatus(fresh.length+' new cheque(s) for '+dLabel+' — not imported'); return;
-    }
-    let added = 0, skipped = 0;
-    for(let i=0;i<fresh.length;i++){
-      const {e, bank} = fresh[i];
-      const bl = (BANKS.find(b=>b.id===bank)||{}).label || bank, n = chNoOf(e);
-      const ok = confirm('Cheque '+(i+1)+' of '+fresh.length+'\n\nSl. No.: '+(e.sl!=null?e.sl:'—')+'\nChq No.: '+(n||'—')+(chqDateOK(e.dated)?'  dt. '+fmtDMY(e.dated):'')
-        +'\nPass Book: '+bl+'\nTo: '+(e.to||'—')+'\nPurpose: '+(e.purpose||'—')+'\nAmount: ₹'+inr(amtOf(e))
-        +'\n\nOK = import this cheque as PENDING Pass Book entry\nCancel = skip this cheque');
-      if(!ok){ skipped++; continue; }
-      const parts = ['Chq No. '+(n||'—')+(chqDateOK(e.dated)?' dt. '+fmtDMY(e.dated):'')];
-      if(e.to) parts.push(String(e.to).trim());
-      if(e.purpose) parts.push(String(e.purpose).trim());
-      parts.push('Issued '+fmtDMY(day));
-      await db.collection('passbook').doc(bank).collection('entries').doc(docId(e)).set({
-        date:null, particulars:chqEsc(parts.join(' – ')), received:null, payment:amtOf(e),
-        chqPending:true, chqImported:true, chqRegId:e.id!=null?e.id:null, chqSl:Number(e.sl)||0, chqNo:n, chqDoi:day, chqCancelled:false,
-        createdAt:firebase.firestore.FieldValue.serverTimestamp()
+    for(let i=0;i<fresh.length;i+=400){
+      const batch = db.batch();
+      fresh.slice(i,i+400).forEach(({e,bank,doi})=>{
+        const n = chNoOf(e);
+        const parts = ['Chq No. '+(n||'—')+(chqDateOK(e.dated)?' dt. '+fmtDMY(e.dated):'')];
+        if(e.to) parts.push(String(e.to).trim());
+        if(e.purpose) parts.push(String(e.purpose).trim());
+        parts.push('Issued '+fmtDMY(doi));
+        batch.set(db.collection('passbook').doc(bank).collection('entries').doc(docId(e)), {
+          date:null, particulars:chqEsc(parts.join(' – ')), received:null, payment:amtOf(e),
+          chqPending:true, chqImported:true, chqNew:true, chqRegId:e.id!=null?e.id:null, chqSl:Number(e.sl)||0, chqNo:n, chqDoi:doi, chqCancelled:false,
+          createdAt:firebase.firestore.FieldValue.serverTimestamp()
+        });
       });
-      added++;
+      await batch.commit();
     }
-    chqShowStatus('Cheques of '+dLabel+': '+added+' imported, '+skipped+' skipped');
-    alert('Done for '+dLabel+'.\nImported: '+added+'\nSkipped: '+skipped+(skipCan?'\nCancelled (not offered): '+skipCan:''));
+    chqShowStatus(fresh.length ? fresh.length+' NEW cheque(s) added as pending' : 'no new cheques · '+have+' already in Pass Books');
+    if(manual) alert(fresh.length
+      ? '🔔 '+fresh.length+' NEW cheque(s) from the Cheque Register were not in the Pass Books and are now shown as PENDING.'
+      : 'No new cheque entry. All '+have+' register cheques of FY 2024-25 & 2025-26 are already in the Pass Books'+(skipCan?' ('+skipCan+' cancelled skipped)':'')+'.'+(noBank.size?'\nNo Pass Book mapped for A/C: '+[...noBank].join(', '):''));
   }catch(err){
     console.error(err); chqShowStatus('error: '+err.message);
     if(manual) alert('Cheque check failed: '+err.message);
-  }finally{ chqBusy = false; }
+  }finally{ chqBusy = false; chqAlertRender(); }
 }
 
 /* ---------- Load bank Pass Book data (rows read from the bank PDF / JPEG) for the open Pass Book ----------
